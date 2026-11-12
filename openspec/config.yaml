@@ -1,0 +1,61 @@
+schema: spec-driven
+
+context: |
+  Language: zh-CN
+  All artifacts must be written in zh-CN.
+  Keep OpenSpec structural headings and SHALL/MUST keywords in English.
+
+  ## 项目概述
+  Linux 分布式服务器性能监控系统，Push 模式：
+  - worker（部署在被监控机器）：周期性（默认 10 秒）采集 CPU/负载/软中断/内存/磁盘/网络指标，
+    通过 gRPC 推送 MonitorInfo 到 manager。
+  - manager（管理端）：接收数据、计算健康评分、写入 MySQL、对外提供 QueryService 查询接口；
+    另有 query_client 命令行工具（复用 RpcClient）。
+  - 服务器标识统一为 `hostname_ip`；manager 默认监听 0.0.0.0:50051；离线阈值 60 秒。
+
+  ## 技术栈
+  - C++17，CMake ≥ 3.10，GCC 9+/Clang 10+，仅面向 Linux（内核 5.4+）。
+  - gRPC + Protocol Buffers（proto/ 目录，生成 monitor_proto 库）。
+  - 数据采集：内核模块（worker/src/kmod，字符设备 /dev/cpu_stat_monitor、/dev/cpu_softirq_monitor）、
+    eBPF + libbpf skeleton（worker/src/ebpf，ENABLE_EBPF 选项，缺依赖时回退到 procfs 的 net_monitor）、procfs。
+  - 存储：MySQL 8.0+（表结构见 manager/sql/init_server_performance.sql；BUILD_MANAGER 选项控制 manager 编译）。
+
+  ## 代码结构与约定
+  - worker/include|src/monitor：每类指标一个 *Monitor 类，继承 monitor::MonitorInter，
+    实现 UpdateOnce(monitor::proto::MonitorInfo*) 与 Stop()；由 MetricCollector 汇总。
+  - worker/src/rpc：MonitorPusher 负责推送；manager/src/rpc：GrpcServer、QueryService、RpcClient。
+  - manager/src：HostManager（接收/评分/入库）、QueryManager（查询逻辑）。
+  - 命名空间 monitor / monitor::proto；头文件使用 #pragma once。
+  - 代码风格：Google C++ Style（.clang-format），2 空格缩进；注释可用中文。
+  - 新增 proto 字段需保持向后兼容（不复用/修改已有字段号）。
+  - 新增源文件必须同步加入对应 CMakeLists.txt。
+
+  ## 开发环境注意事项
+  - 开发机为 macOS（CLion），但内核模块、eBPF、/proc 采集只能在 Linux 上编译和运行验证；
+    macOS 上无法完成完整构建时需在任务/验证中明确说明，并给出 Linux 上的验证步骤。
+  - 项目目前没有单元测试框架；如需新增测试，优先使用 GoogleTest 并通过 CMake 选项接入。
+
+rules:
+  proposal:
+    - 明确写出影响的模块（worker / manager / proto / kmod / ebpf / sql）
+    - 明确写出不在本次范围内的内容
+    - 如涉及 proto 或数据库表结构变更，说明兼容性与迁移方式
+  design:
+    - 涉及跨 worker 与 manager 的改动时，画出或描述数据流
+    - 说明对采集开销、推送频率、数据库写入量的影响
+  tasks:
+    - 每个任务粒度控制在 2 小时以内
+    - 任务按 proto → worker → manager → sql → 文档 的依赖顺序排列
+    - 每组任务末尾包含构建/验证步骤（标注需在 Linux 上执行的部分）
+  specs:
+    - 每个 Requirement 至少包含一个 Scenario，使用 WHEN/THEN 描述
+    - gRPC 接口需求需写明请求参数、返回字段与错误情况
+
+operations:
+  apply:
+    guidance:
+      - 遵循现有代码风格与目录结构，不做无关重构
+      - 修改后尽量在本地执行 cmake 构建；无法在 macOS 验证的部分如实说明
+  archive:
+    guidance:
+      - 归档前确认 README 中的接口表、指标表、配置参数与实现一致
