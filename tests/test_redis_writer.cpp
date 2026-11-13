@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <random>
 
@@ -119,6 +120,56 @@ TEST_F(RedisWriterTest, RunqFieldsWrittenZeroKeptAndClearedWhenAbsent) {
                         std::back_inserter(members));
   ASSERT_EQ(members.size(), 1U);
   EXPECT_EQ(members[0].find("runq"), std::string::npos) << members[0];
+  EXPECT_EQ(w.write_errors(), 0U);
+}
+
+TEST_F(RedisWriterTest, ScoreAndEvictionFields) {
+  StorageQueue q(16);
+  RedisWriter w(q, opt_);
+  const int64_t now = 1'800'000'000'000;
+  auto a = acc("w1", 1, now);
+  a.score.total = 1.0;
+  a.score.cpu = 1.0;
+  a.score.runq = 0.3;
+  a.score.mem = 0.75;
+  a.score.net = 0.5;
+  a.score.best_nic = "ens160";
+  w.write_batch({a});
+  std::unordered_map<std::string, std::string> h;
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["score"], "1.0000");
+  EXPECT_EQ(h["s_cpu"], "1.0000");
+  EXPECT_EQ(h["s_runq"], "0.3000");
+  EXPECT_EQ(h["s_mem"], "0.7500");
+  EXPECT_EQ(h["s_net"], "0.5000");
+  EXPECT_EQ(h["best_nic"], "ens160");
+  EXPECT_EQ(h["evicted"], "0");
+  ASSERT_TRUE(h.count("evict_reason"));
+  EXPECT_EQ(h["evict_reason"], "");
+  EXPECT_EQ(h["inflight_tasks"], "0");
+  EXPECT_EQ(h["f_timeout"], "1.0000");
+
+  auto b = acc("w1", 2, now + 1000);
+  b.evicted = true;
+  b.evict_reason = "cpu";
+  b.inflight.inflight_tasks = 3;
+  b.inflight.inflight_bytes = 3072;
+  b.inflight.unconfirmed = 2;
+  b.inflight.f_inflight = 0.5;
+  b.inflight.f_timeout = std::exp(-0.5);
+  b.inflight.timeout_count = 1;
+  w.write_batch({b});
+  h.clear();
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["evicted"], "1");
+  EXPECT_EQ(h["evict_reason"], "cpu");
+  EXPECT_EQ(h["best_nic"], "");
+  EXPECT_EQ(h["inflight_tasks"], "3");
+  EXPECT_EQ(h["inflight_bytes"], "3072");
+  EXPECT_EQ(h["unconfirmed"], "2");
+  EXPECT_EQ(h["f_inflight"], "0.5000");
+  EXPECT_EQ(h["f_timeout"], "0.6065");
+  EXPECT_EQ(h["timeout_count"], "1.0000");
   EXPECT_EQ(w.write_errors(), 0U);
 }
 

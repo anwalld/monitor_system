@@ -17,6 +17,7 @@ COPY kmod/cpustat/cpustat_uapi.h kmod/cpustat/
 COPY bpf bpf
 COPY worker worker
 COPY manager manager
+COPY experiments experiments
 RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLM_BUILD_TESTS=OFF -DLM_ENABLE_BPF=OFF \
     && cmake --build build --target manager
 

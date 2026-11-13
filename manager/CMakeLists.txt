@@ -33,16 +33,31 @@ else()
   endif()
 endif()
 
+add_library(lm_manager_scoring STATIC
+  scoring/scoring_params.cpp
+  scoring/score.cpp
+  scoring/eviction.cpp
+  scoring/selector.cpp)
+target_include_directories(lm_manager_scoring PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lm_manager_scoring PUBLIC lm_common lm_proto)
+
 add_library(lm_manager_ingest STATIC
+  inflight/inflight_ledger.cpp
   ingest/node_table.cpp
   ingest/collector_service.cpp)
 target_include_directories(lm_manager_ingest PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(lm_manager_ingest PUBLIC lm_common lm_proto)
+target_link_libraries(lm_manager_ingest PUBLIC lm_common lm_proto lm_manager_scoring)
 
 add_library(lm_manager_storage STATIC
   storage/redis_writer.cpp)
 target_include_directories(lm_manager_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_manager_storage PUBLIC lm_manager_ingest ${LM_REDISPP_TARGET})
 
+add_library(lm_manager_api STATIC
+  api/scheduler_service.cpp
+  scheduler_loop.cpp)
+target_include_directories(lm_manager_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lm_manager_api PUBLIC lm_manager_ingest)
+
 add_executable(manager main.cpp)
-target_link_libraries(manager PRIVATE lm_manager_ingest lm_manager_storage)
+target_link_libraries(manager PRIVATE lm_manager_ingest lm_manager_storage lm_manager_api)

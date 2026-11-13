@@ -94,6 +94,20 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
           {"mem_avail_ratio", fmt_float(s.mem_avail_ratio())},
           {"disk_util", fmt_float(s.disk_util())},
           {"last_seen_ms", std::to_string(a.recv_wall_ms)},
+          {"score", fmt_float(static_cast<float>(a.score.total))},
+          {"s_cpu", fmt_float(static_cast<float>(a.score.cpu))},
+          {"s_runq", fmt_float(static_cast<float>(a.score.runq))},
+          {"s_mem", fmt_float(static_cast<float>(a.score.mem))},
+          {"s_net", fmt_float(static_cast<float>(a.score.net))},
+          {"best_nic", a.score.best_nic},
+          {"evicted", a.evicted ? "1" : "0"},
+          {"evict_reason", a.evict_reason},
+          {"inflight_tasks", std::to_string(a.inflight.inflight_tasks)},
+          {"inflight_bytes", std::to_string(a.inflight.inflight_bytes)},
+          {"unconfirmed", std::to_string(a.inflight.unconfirmed)},
+          {"f_inflight", fmt_float(static_cast<float>(a.inflight.f_inflight))},
+          {"f_timeout", fmt_float(static_cast<float>(a.inflight.f_timeout))},
+          {"timeout_count", fmt_float(static_cast<float>(a.inflight.timeout_count))},
       };
       // 调度延迟（M3）：Worker 三个字段同时设置或同时不设置。未上报时删掉旧值，避免读到过时的 P99
       if (s.has_runq_p99_us()) {

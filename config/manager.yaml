@@ -7,3 +7,27 @@ storage:
 redis:
   uri: tcp://127.0.0.1:6379    # 密码从环境变量 LM_REDIS_PASSWORD 读取
   ts_retention_s: 3600         # node:{id}:ts 保留时长
+scoring:                       # 评分与剔除（M5），缺省值即开发文档“默认参数”表
+  missing_score: 0.3           # 没有调度延迟或没有网卡数据时该项的分数
+  lost_after_ms: 3000          # 超过该时间没有上报视为失联，不参与选择
+  evict_after: 3               # 关键指标连续越过剔除线的次数
+  recover_after: 5             # 剔除后连续回到恢复线以内的次数
+  immediate_factor: 10         # 越过剔除线该倍数时立即剔除
+  cpu:  {good: 0.2, bad: 0.9,  evict: 0.97,  recover: 0.85, weight: 0.3}
+  runq: {good: 100, bad: 2000, evict: 20000, recover: 5000, weight: 0.3}  # P99 微秒，取对数映射
+  mem:  {good: 0.5, bad: 0.1,  evict: 0.05,  recover: 0.1,  weight: 0.2}  # 可用内存比例
+  net:                         # 每块网卡取三项最小值，节点取最好的网卡
+    weight: 0.2
+    rtt_ms:  {good: 5, bad: 100}
+    timeout: {good: 0, bad: 0.1}
+    retrans: {good: 0, bad: 0.05}
+    evict: 0.5                 # 所有网卡超时率都 ≥ 0.5 时越线
+    recover: 0.2
+inflight:                      # 在途任务账（M5）
+  ack_timeout_s: 30            # 分配或 MarkSent 后多久没收到 RECEIVED 算确认超时
+  exec_timeout_s: 300          # RECEIVED 后多久没收到 DONE/FAILED 算执行超时
+  lambda: 0.5                  # f_timeout = exp(−lambda × T)
+  timeout_half_life_s: 600     # 超时计数 T 的半衰期
+  baseline_tau_s: 60           # 在途基线指数平滑的时间常数
+  base_tasks_floor: 2          # 在途任务数基线下限
+  base_bytes_floor: 1048576    # 在途字节数基线下限

@@ -1,4 +1,4 @@
-# 部署与环境搭建（M0、M2–M4）
+# 部署与环境搭建（M0–M5）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
@@ -69,6 +69,29 @@ set -a; . ./.env; set +a
 docker compose exec redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning ping   # PONG
 docker compose exec mysql mysql -u"${MYSQL_USER:-lm}" -p"$MYSQL_PASSWORD" "${MYSQL_DATABASE:-lm}" -e 'SHOW TABLES'
 ```
+
+### 5. 评分与调度（M5）
+
+Manager 每收到一条上报就给节点打分（CPU 0.3、调度延迟 0.3、可用内存 0.2、最好网卡 0.2），关键指标连续 3 次越过剔除线就剔除，连续 5 次回到恢复线以内才恢复。参数在 `config/manager.yaml` 的 `scoring` 段，缺省值就是开发文档“默认参数”表。镜像里的配置在构建时拷入 `/etc/lm/manager.yaml`，要改参数就重新构建镜像，或在 compose 里把改过的文件挂载到这个路径。
+
+```bash
+set -a; . ./.env; set +a
+docker compose exec redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning \
+  HMGET node:<node_id> score s_cpu s_runq s_mem s_net best_nic evicted evict_reason
+docker compose logs manager | grep -E '剔除|恢复|未上报调度延迟'   # 剔除、恢复与缺失项提示
+```
+
+在途任务账的参数在 `inflight` 段（确认超时 30 秒、执行超时 300 秒、λ 0.5、T 半衰期 10 分钟、基线时间常数 60 秒）。`node:{id}` 里的 `inflight_tasks`、`f_inflight`、`f_timeout`、`timeout_count`、`unconfirmed` 可以看到每台节点的在途状态；Manager 每 10 秒的汇总日志里有在途、作废、未确认、执行超时、迟到事件的累计数。
+
+在开发机上用 `lm-bench` 调 `Allocate`（Manager 用 host 网络，直接连 Manager 机的 50051）：
+
+```bash
+./build/experiments/lm-bench allocate -m <manager_ip>:50051 -n 1000
+```
+
+验收：在 Worker 上 `stress -c <核数> -t 25`，约 3 秒后 `evicted` 变成 1，`Allocate` 返回 `RESOURCE_EXHAUSTED`（只有一台 Worker 时）；stress 结束约 5 秒后恢复。
+
+回滚：`docker tag lm-manager:m3 lm-manager && docker compose up -d --no-build manager`（升级前先 `docker tag lm-manager lm-manager:m3` 留一份旧镜像）。
 
 ### 停止与清理
 
@@ -232,3 +255,38 @@ Worker 的探测线程给每块网卡开一个绑定该网卡（`SO_BINDTODEVICE
   ```
 
 - **回滚**：配置里写 `nic_probe: off`，然后 `systemctl restart lm-worker`。
+
+### 8. 任务服务（M5）
+
+Worker 的任务服务默认关闭。开启后在 50052 端口接受客户端直接提交的任务（客户端先向 Manager `Allocate` 拿地址）。
+
+- **配置**（`/etc/lm/worker.yaml`）：
+
+  ```yaml
+  manager_addr: <manager_ip>:50051   # 用 Manager 机的真实地址，不要用 127.0.0.1：Manager 把上报对端 IP + 50052 作为 Worker 地址发给客户端
+  task:
+    enabled: true
+    listen: 0.0.0.0:50052
+    allowed_commands: [/bin/sleep, /usr/bin/stress]   # 绝对路径，完全匹配
+    token: "<随机串>"                                  # 例如 openssl rand -hex 16；也可用环境变量 LM_TASK_TOKEN
+  ```
+
+  写了 token 的配置文件要收紧权限：`sudo chown root:lm /etc/lm/worker.yaml && sudo chmod 640 /etc/lm/worker.yaml`。
+- **安全**：
+  - 只执行白名单里的命令；白名单为空时拒绝所有任务。
+  - Worker 在开启任务服务前清空 ambient capability，任务子进程没有任何能力（Worker 自己的 CAP_NET_RAW 等不受影响）。
+  - systemd 单元的 `NoNewPrivileges`、`ProtectSystem=strict`、`PrivateTmp` 对任务同样生效：任务只能写 `/tmp`。
+  - token 走明文 gRPC，只适合内网。
+- **确认生效**：`journalctl -u lm-worker | grep 任务服务`，应看到监听地址、并发上限和白名单。
+- **验收**：
+
+  ```bash
+  # 子进程没有能力：输出里 CapEff、CapAmb 都是 0
+  ./build/experiments/lm-bench submit -m <manager_ip>:50051 -r 50 -d 0.05 --token <token> \
+      --cmd /bin/grep --args "Cap /proc/self/status" --print     # 需要先把 /bin/grep 加进白名单
+  # 任务转移：压测期间在某台 Worker 上 stress -c <核数> -t 45，它的占比应降到接近 0，结束后回升
+  ./build/experiments/lm-bench submit -m <manager_ip>:50051 -r 10 -d 120 --token <token> --csv run.csv
+  ```
+
+- **只有一台 Worker 虚拟机时**：可以在开发机的 Docker 里临时起第二个 Worker 做转移验收（`cpu_source: proc`、`runq: off`、`nic_probe: off`，发布 50052 端口），它的满分只有 0.65。这只用于测试，正式环境不容器化 Worker。
+- **回滚**：`task.enabled: false` 后 `systemctl restart lm-worker`。

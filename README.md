@@ -6,7 +6,7 @@
 
 Linux 服务器性能监控与调度系统。Worker 采集节点指标，Manager 给每台节点打分，把每个任务派给此刻最合适的节点。AI 服务负责异常诊断、运维问答、负载预测和日报，Web 看板实时展示。
 
-> 正在按里程碑重构，目前完成到 M4：采集 → 上报 → Manager → Redis 的链路已打通，CPU 读数来自 cpustat 内核模块的共享页，调度延迟由 eBPF 测量，每块网卡单独测链路质量和流量。进度见下文“里程碑”。
+> 正在按里程碑重构，目前完成到 M5：采集 → 上报 → Manager → Redis 的链路已打通，CPU 读数来自 cpustat 内核模块的共享页，调度延迟由 eBPF 测量，每块网卡单独测链路质量和流量；Manager 按这些指标给节点打分、剔除越限节点，客户端 `Allocate` 拿到 Worker 地址后直连 Worker 提交任务，Manager 用在途任务账跟踪每个任务。进度见下文“里程碑”。
 
 ## 目标
 
@@ -36,15 +36,16 @@ proto/        monitor.proto（上报）  task.proto（任务/探测）  advisor.
 kmod/cpustat/ 内核模块：定时把每核空闲时间写进只读共享页（/dev/cpustat）
 bpf/          eBPF 程序：runqlat.bpf.c（调度排队延迟直方图），构建时生成 vmlinux.h 和 skeleton
 common/       环形缓冲、seqlock 读端、配置、日志
-worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  netprobe/（多网卡 ICMP 探测、TCP 重传率、流量）  bench/（CPU 读取耗时基准、调度延迟对照工具）  main.cpp
-manager/      ingest/（接收上报、节点表）  storage/（Redis 热数据）  main.cpp
+worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  netprobe/（多网卡 ICMP 探测、TCP 重传率、流量）  task/（任务执行服务）  bench/（CPU 读取耗时基准、调度延迟对照工具）  main.cpp
+manager/      ingest/（接收上报、节点表）  scoring/（评分、剔除、加权抽样）  inflight/（在途任务账）  api/（Scheduler 服务）  scheduler_loop（100 ms 主循环）  storage/（Redis 热数据）  main.cpp
+experiments/  lm-bench：调试与压测客户端（allocate、submit）
 tests/        GoogleTest 单元测试与 Redis 集成测试
 config/       worker.yaml、manager.yaml 样例
 deploy/       docker-compose、MySQL 表结构、策略路由与自检脚本、systemd、安装脚本
 openspec/     需求规格与按里程碑划分的变更
 ```
 
-后续里程碑会加入 `ai/`、`web/`、`experiments/`。
+后续里程碑会加入 `ai/`、`web/`。
 
 ## 构建
 
@@ -147,12 +148,26 @@ make -C kmod/cpustat && sudo insmod kmod/cpustat/cpustat.ko   # 仅 Linux：编�
 ./build/worker/worker -c config/worker.yaml --dry-run    # 不上报，每秒把样本以 JSON 打印出来
 ./build/worker/cpu_read_bench                            # 对比共享页与 /proc/stat 的读取耗时
 LM_REDIS_PASSWORD=... ./build/manager/manager -c config/manager.yaml
+./build/experiments/lm-bench allocate -m 127.0.0.1:50051          # 申请一次节点，打印 task_id 和 Worker 地址
+./build/experiments/lm-bench allocate -m 127.0.0.1:50051 -n 1000  # 申请 1000 次，打印每台 Worker 被选中的比例
+./build/experiments/lm-bench submit -m 127.0.0.1:50051 -r 10 -d 60 --token <token>  # 每秒 10 个 sleep 0.2，打印各节点占比和完成时间
 ```
+
+### 任务流程
+
+```
+客户端 ──Allocate──► Manager（选节点，记账 ALLOCATED）
+客户端 ──MarkSent──► Manager（SENT，确认计时重新开始）
+客户端 ──Submit────► Worker（白名单、token）──OnTaskEvent RECEIVED──► Manager（RUNNING）
+                     Worker 执行完 ──────────OnTaskEvent DONE/FAILED──► Manager（销账）
+```
+
+确认超时 30 秒（没 MarkSent 的作废，MarkSent 了的计“未确认”），执行超时 300 秒（超时计数 T 加一，按 10 分钟半衰期衰减）。选择权重 = 分数 × f_inflight（在途量超过自身基线时降权）× f_timeout（exp(−0.5·T)）。Worker 的任务服务默认关闭，开启方法见 `deploy/README.md`。
 
 ### 查看数据
 
 ```bash
-redis-cli HGETALL node:<node_id>                         # 最新指标（含 runq_p50_us、runq_p99_us、runq_drop_rate）
+redis-cli HGETALL node:<node_id>                         # 最新指标、分数明细（score、s_cpu、s_runq、s_mem、s_net、best_nic）与剔除状态（evicted、evict_reason）
 redis-cli ZRANGE node:<node_id>:ts -5 -1                  # 最近 5 秒样本
 redis-cli XREVRANGE stream:metrics + - COUNT 1            # 最近一秒所有节点
 ```
@@ -166,7 +181,7 @@ redis-cli XREVRANGE stream:metrics + - COUNT 1            # 最近一秒所有�
 | M2 内核模块 | cpustat 共享页 + seqlock，替换 /proc 读 CPU | 虚拟机验收完成：读取耗时降低 99.8%，加载卸载 1000 次无泄漏 |
 | M3 eBPF | 调度延迟直方图 | 虚拟机验收完成：与 bcc runqlat 分布距离 0.04，单核拥挤时 P99 升高约 258 倍 |
 | M4 多网卡 | ICMP 探测、TCP 重传率、流量 | 虚拟机验收完成：netem 弱网只让对应网卡变差（RTT +100ms、重传 11%），另一块不受影响 |
-| M5 调度 | 评分、剔除、概率选择、在途账、任务流程 | |
+| M5 调度 | 评分、剔除、概率选择、在途账、任务流程、压测客户端 | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：本地 stress 打满时该节点任务占比从约 60% 降到 0，结束后 10 秒内回升，2464 个任务无失败；待 3 台 Worker 重做 |
 | M6 节点状态机 | 熔断、急救、慢启动、退避 | |
 | M7 存储与看板 | MySQL 冷数据、REST/WebSocket、Vue 看板 | |
 | M8–M9 AI | 异常诊断、运维问答、负载预测、日报 | |

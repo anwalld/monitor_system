@@ -1,7 +1,7 @@
 #pragma once
 
 // 存储线程：把被接受的上报写入 Redis 热数据。
-//   node:{id}       Hash        最新指标与元信息
+//   node:{id}       Hash        最新指标、元信息、分数明细与剔除状态
 //   node:{id}:ts    Sorted Set  每秒样本（压缩 JSON），score = ts_ms，保留 1 小时
 //   stream:metrics  Stream      每秒一条，含这一秒内所有节点的最新样本
 // 写失败只记日志（限频），不重试、不积压。

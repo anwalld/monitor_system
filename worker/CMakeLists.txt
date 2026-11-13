@@ -33,8 +33,19 @@ add_library(lm_worker_reporter STATIC
 target_include_directories(lm_worker_reporter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_worker_reporter PUBLIC lm_common lm_proto)
 
+# 任务执行（M5）：task_runner 是纯 POSIX，task_service/event_sender 依赖 gRPC
+add_library(lm_worker_task_runner STATIC
+  task/task_runner.cpp)
+target_include_directories(lm_worker_task_runner PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/task)
+
+add_library(lm_worker_task STATIC
+  task/event_sender.cpp
+  task/task_service.cpp)
+target_include_directories(lm_worker_task PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/task)
+target_link_libraries(lm_worker_task PUBLIC lm_worker_task_runner lm_common lm_proto)
+
 add_executable(worker main.cpp)
-target_link_libraries(worker PRIVATE lm_worker_collector lm_worker_reporter lm_worker_netprobe)
+target_link_libraries(worker PRIVATE lm_worker_collector lm_worker_reporter lm_worker_netprobe lm_worker_task)
 
 # CPU 读取耗时基准（M2 验收）
 add_executable(cpu_read_bench bench/cpu_read_bench.cpp)

@@ -1,4 +1,4 @@
-// manager：接收 Worker 上报，维护节点表，写 Redis 热数据。
+// manager：接收 Worker 上报，维护节点表与分数，处理 Allocate，写 Redis 热数据。
 // 用法：manager [-c config/manager.yaml]
 // Redis 密码从环境变量 LM_REDIS_PASSWORD 读取（与 deploy/.env 的 REDIS_PASSWORD 对应）；
 // 环境变量 LM_REDIS_URI 非空时覆盖配置里的 redis.uri。
@@ -13,11 +13,13 @@
 #include <grpcpp/grpcpp.h>
 #include <spdlog/spdlog.h>
 
+#include "api/scheduler_service.h"
 #include "ingest/collector_service.h"
 #include "ingest/node_table.h"
 #include "lm/clock.h"
 #include "lm/config.h"
 #include "lm/log.h"
+#include "scheduler_loop.h"
 #include "storage/redis_writer.h"
 
 namespace {
@@ -59,7 +61,15 @@ int main(int argc, char** argv) {
   lm::init_logging("manager", cfg.get<std::string>("log_level", "info"));
 
   lm::manager::NodeTable::Options topt;
-  topt.worker_port = static_cast<uint16_t>(cfg.get<int>("worker_port", 50052));
+  try {
+    topt.worker_port = static_cast<uint16_t>(cfg.get<int>("worker_port", 50052));
+    topt.scoring = lm::manager::ScoringParams::from_config(cfg);
+    topt.inflight = lm::manager::InflightParams::from_config(cfg);
+  } catch (const lm::ConfigError& e) {
+    spdlog::critical("{}", e.what());
+    return 2;
+  }
+  topt.online_window_ms = topt.scoring.lost_after_ms;
   lm::manager::NodeTable table(topt);
   lm::manager::StorageQueue queue(cfg.get<std::size_t>("storage.queue_capacity", 4096));
 
@@ -71,11 +81,13 @@ int main(int argc, char** argv) {
   lm::manager::RedisWriter writer(queue, ropt);
 
   lm::manager::CollectorService collector(table, queue);
+  lm::manager::SchedulerService scheduler(table, {});
   const std::string listen = cfg.get<std::string>("listen", "0.0.0.0:50051");
   grpc::ServerBuilder builder;
   int bound_port = 0;
   builder.AddListeningPort(listen, grpc::InsecureServerCredentials(), &bound_port);
   builder.RegisterService(&collector);
+  builder.RegisterService(&scheduler);
   std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
   if (!server || bound_port == 0) {
     spdlog::critical("无法监听 {}", listen);
@@ -85,6 +97,8 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
   writer.start();
+  lm::manager::SchedulerLoop loop(table, {});
+  loop.start();
   spdlog::info("manager 启动，gRPC 监听 {}，Redis {}", listen, ropt.uri);
 
   auto next_report = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -92,15 +106,20 @@ int main(int argc, char** argv) {
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     if (std::chrono::steady_clock::now() >= next_report) {
       const auto c = table.counts(lm::mono_ms());
-      spdlog::info("节点 在线 {}/{}，累计接受 {} 条，乱序丢弃 {} 条，存储队列 {}（丢弃 {}），Redis 错误 {}",
-                   c.online, c.total, collector.accepted(), collector.stale(), queue.size(),
-                   queue.dropped(), writer.write_errors());
+      const auto t = table.inflight_totals();
+      spdlog::info(
+          "节点 在线 {}/{}，累计接受 {} 条，乱序丢弃 {} 条，存储队列 {}（丢弃 {}），Redis 错误 {}，"
+          "分配 {} 次，拒绝 {} 次，在途 {}，作废 {}，未确认 {}，执行超时 {}，迟到事件 {}",
+          c.online, c.total, collector.accepted(), collector.stale(), queue.size(), queue.dropped(),
+          writer.write_errors(), scheduler.allocated(), scheduler.rejected(), t.inflight, t.voided,
+          t.unconfirmed, t.exec_timeouts, t.late_events);
       next_report += std::chrono::seconds(10);
     }
   }
 
   spdlog::info("收到退出信号，正在停止");
   server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(2));
+  loop.stop();
   writer.stop();
   return 0;
 }

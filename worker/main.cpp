@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -24,6 +25,7 @@
 #include "lm/config.h"
 #include "lm/log.h"
 #include "reporter/reporter.h"
+#include "task/task_service.h"
 
 namespace {
 
@@ -118,6 +120,15 @@ int main(int argc, char** argv) {
       spdlog::critical("{}", e.what());
       return 2;
     }
+  }
+
+  lm::worker::TaskConfig task_cfg;
+  try {
+    task_cfg = lm::worker::TaskConfig::parse(cfg, std::thread::hardware_concurrency(),
+                                             std::getenv("LM_TASK_TOKEN"));
+  } catch (const lm::ConfigError& e) {
+    spdlog::critical("{}", e.what());
+    return 2;
   }
 
   if (::access("/proc/stat", R_OK) != 0) {
@@ -222,6 +233,9 @@ int main(int argc, char** argv) {
                                   collect_interval);
 
   std::unique_ptr<lm::worker::Reporter> reporter;
+  std::unique_ptr<lm::worker::EventSender> events;
+  std::unique_ptr<lm::worker::TaskService> task_service;
+  std::unique_ptr<grpc::Server> task_server;
   if (dry_run) {
     reporter = std::make_unique<lm::worker::Reporter>(
         ring,
@@ -245,6 +259,37 @@ int main(int argc, char** argv) {
     auto channel = grpc::CreateCustomChannel(manager, grpc::InsecureChannelCredentials(), args);
     reporter = std::make_unique<lm::worker::Reporter>(ring, channel, ropt);
     spdlog::info("worker 启动，node_id={}，manager={}", node_id, manager);
+
+    if (task_cfg.enabled) {
+      // 任务子进程不继承 Worker 的能力（原始 socket、eBPF 在此之前已经打开）
+      std::string err;
+      if (!lm::worker::clear_ambient_caps(&err)) {
+        spdlog::critical("清空 ambient capability 失败：{}，为安全起见不启动任务服务", err);
+        return 1;
+      }
+      events = std::make_unique<lm::worker::EventSender>(channel, lm::worker::EventSender::Options{});
+      task_service = std::make_unique<lm::worker::TaskService>(task_cfg, *events);
+      grpc::ServerBuilder builder;
+      int bound = 0;
+      builder.AddListeningPort(task_cfg.listen, grpc::InsecureServerCredentials(), &bound);
+      builder.RegisterService(task_service.get());
+      grpc::ResourceQuota quota("lm-task");
+      quota.SetMaxThreads(task_cfg.max_concurrent + 4);
+      builder.SetResourceQuota(quota);
+      task_server = builder.BuildAndStart();
+      if (!task_server || bound == 0) {
+        spdlog::critical("任务服务无法监听 {}", task_cfg.listen);
+        return 1;
+      }
+      events->start();
+      std::string cmds;
+      for (const auto& c : task_cfg.allowed_commands) cmds += (cmds.empty() ? "" : ", ") + c;
+      spdlog::info("任务服务监听 {}，并发上限 {}，token {}，白名单：{}", task_cfg.listen,
+                   task_cfg.max_concurrent, task_cfg.token.empty() ? "未设置" : "已设置",
+                   cmds.empty() ? "（空，拒绝所有任务）" : cmds);
+    } else {
+      spdlog::info("任务服务未开启（task.enabled: false）");
+    }
   }
 
   collector.start();
@@ -252,6 +297,8 @@ int main(int argc, char** argv) {
   while (!g_stop.load()) std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
   spdlog::info("收到退出信号，正在停止");
+  if (task_server) task_server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(2));
+  if (events) events->stop();
   reporter->stop();
   collector.stop();
   spdlog::info("已停止：采集 {} 条，上报成功 {} 次、失败 {} 次", collector.samples_published(),

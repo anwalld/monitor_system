@@ -3,6 +3,7 @@
 #include <grpcpp/grpcpp.h>
 
 #include "ingest/collector_service.h"
+#include "lm/clock.h"
 
 using namespace lm::manager;
 
@@ -28,10 +29,10 @@ struct Harness {
     lm::Ack ack;
     return stub->Report(&ctx, s, &ack);
   }
-  grpc::Status event(lm::TaskEvent::Kind k) {
+  grpc::Status event(lm::TaskEvent::Kind k, const std::string& task_id = "t1") {
     grpc::ClientContext ctx;
     lm::TaskEvent e;
-    e.set_task_id("t1");
+    e.set_task_id(task_id);
     e.set_kind(k);
     lm::Ack ack;
     return stub->OnTaskEvent(&ctx, e, &ack);
@@ -78,6 +79,23 @@ TEST(CollectorService, TaskEventKindValidation) {
   EXPECT_TRUE(h.event(lm::TaskEvent::RECEIVED).ok());
   EXPECT_EQ(h.event(lm::TaskEvent::KIND_UNSPECIFIED).error_code(),
             grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(h.event(lm::TaskEvent::DONE, "").error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(CollectorService, TaskEventsSettleLedgerAndLateIsOk) {
+  Harness h;
+  lm::Sample s;
+  s.set_node_id("w1");
+  s.set_seq(1);
+  s.set_mem_avail_ratio(0.8F);
+  ASSERT_TRUE(h.report(s).ok());
+  ASSERT_TRUE(h.table.allocate(lm::mono_ms(), 0.5, "t9", 10).pick);
+  EXPECT_EQ(h.table.inflight_snapshot("w1").inflight_tasks, 1);
+  EXPECT_TRUE(h.event(lm::TaskEvent::RECEIVED, "t9").ok());
+  EXPECT_TRUE(h.event(lm::TaskEvent::DONE, "t9").ok());
+  EXPECT_EQ(h.table.inflight_snapshot("w1").inflight_tasks, 0);
+  EXPECT_TRUE(h.event(lm::TaskEvent::DONE, "t9").ok());  // 迟到：OK，只计数
+  EXPECT_EQ(h.table.inflight_totals().late_events, 1U);
 }
 
 }  // namespace

@@ -82,6 +82,15 @@ nic_probe: auto                # 网卡探测（ICMP + TCP 重传 + 流量）：
 #       targets: [172.16.255.2, 8.8.8.8]
 #     - name: ens192
 #       targets: [172.16.13.1]
+# task:                        # 任务服务（M5），默认关闭；开启后在 listen 上接受客户端直接提交的任务
+#   enabled: true
+#   listen: 0.0.0.0:50052
+#   allowed_commands: [/bin/sleep]   # 绝对路径，完全匹配；为空时拒绝所有任务
+#   token: ""                  # 非空时要求 metadata authorization: Bearer <token>；环境变量 LM_TASK_TOKEN 优先
+#   max_concurrent: 0          # 0 表示 2 × 核数
+#   default_timeout_s: 300     # 请求的 timeout_s 为 0 时使用
+#   max_timeout_s: 3600
+#   output_tail_bytes: 4096
 log_level: info
 EOF
 )"

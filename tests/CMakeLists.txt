@@ -42,20 +42,26 @@ target_link_libraries(test_worker PRIVATE lm_worker_collector)
 lm_add_test(test_netprobe test_netprobe.cpp)
 target_link_libraries(test_netprobe PRIVATE lm_worker_netprobe lm_worker_collector)
 
+lm_add_test(test_task_runner test_task_runner.cpp)
+target_link_libraries(test_task_runner PRIVATE lm_worker_task_runner)
+
 target_compile_definitions(test_worker PRIVATE LM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 if(LM_BUILD_MANAGER)
-  lm_add_test(test_manager test_node_table.cpp test_storage_queue.cpp test_redis_writer.cpp)
-  target_link_libraries(test_manager PRIVATE lm_manager_ingest lm_manager_storage)
+  lm_add_test(test_manager test_node_table.cpp test_storage_queue.cpp test_redis_writer.cpp
+    test_scoring.cpp test_inflight.cpp)
+  target_link_libraries(test_manager PRIVATE lm_manager_ingest lm_manager_storage lm_manager_api)
+  target_compile_definitions(test_manager PRIVATE LM_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config")
 endif()
 
 # 用到进程内 gRPC 的测试。系统包的 gRPC 未用 TSan 编译，其内部会被 TSan 大量误报，
 # 所以 TSan 构建下不注册这些测试；竞争检查由上面不经过 gRPC 的测试覆盖。
 if(NOT LM_ENABLE_TSAN)
-  lm_add_test(test_worker_rpc test_reporter.cpp)
-  target_link_libraries(test_worker_rpc PRIVATE lm_worker_reporter)
+  lm_add_test(test_worker_rpc test_reporter.cpp test_task_service.cpp)
+  target_link_libraries(test_worker_rpc PRIVATE lm_worker_reporter lm_worker_task)
+  target_compile_definitions(test_worker_rpc PRIVATE LM_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config")
   if(LM_BUILD_MANAGER)
-    lm_add_test(test_manager_rpc test_collector_service.cpp)
-    target_link_libraries(test_manager_rpc PRIVATE lm_manager_ingest)
+    lm_add_test(test_manager_rpc test_collector_service.cpp test_scheduler_service.cpp)
+    target_link_libraries(test_manager_rpc PRIVATE lm_manager_ingest lm_manager_api)
   endif()
 endif()

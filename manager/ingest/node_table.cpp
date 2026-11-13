@@ -1,5 +1,7 @@
 #include "node_table.h"
 
+#include <algorithm>
+
 namespace lm::manager {
 
 std::optional<std::string> NodeTable::validate(const lm::Sample& s) const {
@@ -33,12 +35,27 @@ NodeTable::Result NodeTable::apply(const lm::Sample& s, std::string_view peer_ip
   n.last_seen_wall_ms = now_wall_ms;
   n.latest = s;
 
+  const bool was_evicted = n.evict.evicted();
+  n.score = compute_score(s, opt_.scoring);
+  n.evict.update(s, opt_.scoring);
+  const bool hint_runq = n.score.runq_missing && !n.hinted_runq_missing;
+  const bool hint_net = n.score.net_missing && !n.hinted_net_missing;
+  n.hinted_runq_missing = n.score.runq_missing;  // 恢复上报后清零，再次缺失会再提示
+  n.hinted_net_missing = n.score.net_missing;
+
   if (out != nullptr) {
     out->addr = n.addr;
     out->ncpu = n.ncpu;
     out->recv_wall_ms = now_wall_ms;
     out->new_node = inserted;
     out->sample = s;
+    out->score = n.score;
+    out->evicted = n.evict.evicted();
+    out->evict_reason = n.evict.reason();
+    out->evicted_changed = out->evicted != was_evicted;
+    out->hint_runq_missing = hint_runq;
+    out->hint_net_missing = hint_net;
+    out->inflight = ledger_.snapshot(n.node_id);
   }
   return Result::kAccepted;
 }
@@ -73,6 +90,86 @@ std::vector<std::string> NodeTable::node_ids() const {
   ids.reserve(nodes_.size());
   for (const auto& [id, n] : nodes_) ids.push_back(id);
   return ids;
+}
+
+SelectResult NodeTable::select(int64_t now_mono_ms, double u) const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return select_locked(now_mono_ms, u);
+}
+
+SelectResult NodeTable::allocate(int64_t now_mono_ms, double u, const std::string& task_id,
+                                 uint64_t input_bytes) {
+  std::lock_guard<std::mutex> lk(mu_);
+  SelectResult r = select_locked(now_mono_ms, u);
+  if (r.pick) ledger_.add(task_id, r.pick->node_id, input_bytes, now_mono_ms);
+  return r;
+}
+
+InflightLedger::MarkResult NodeTable::mark_sent(const std::string& task_id, int64_t now_mono_ms) {
+  std::lock_guard<std::mutex> lk(mu_);
+  return ledger_.mark_sent(task_id, now_mono_ms);
+}
+
+InflightLedger::EventResult NodeTable::on_event(const std::string& task_id,
+                                                lm::TaskEvent::Kind kind, int64_t now_mono_ms) {
+  std::lock_guard<std::mutex> lk(mu_);
+  return ledger_.on_event(task_id, kind, now_mono_ms);
+}
+
+void NodeTable::tick(int64_t now_mono_ms, std::vector<InflightLedger::Expired>* expired) {
+  std::lock_guard<std::mutex> lk(mu_);
+  ledger_.tick(now_mono_ms, expired);
+}
+
+void NodeTable::tick_second(double dt_s) {
+  std::lock_guard<std::mutex> lk(mu_);
+  ledger_.tick_second(dt_s);
+}
+
+InflightLedger::Totals NodeTable::inflight_totals() const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return ledger_.totals();
+}
+
+InflightSnapshot NodeTable::inflight_snapshot(const std::string& node_id) const {
+  std::lock_guard<std::mutex> lk(mu_);
+  return ledger_.snapshot(node_id);
+}
+
+SelectResult NodeTable::select_locked(int64_t now_mono_ms, double u) const {
+  struct Cand {
+    const NodeState* n;
+    double w;
+  };
+  std::vector<Cand> cands;
+  SelectResult r;
+  r.total = nodes_.size();
+  cands.reserve(nodes_.size());
+  for (const auto& [id, n] : nodes_) {
+    if (now_mono_ms - n.last_seen_mono_ms > opt_.scoring.lost_after_ms) {
+      ++r.lost;
+      continue;
+    }
+    if (n.evict.evicted()) {
+      ++r.evicted;
+      continue;
+    }
+    const double w = weight(n.score.total, ledger_.factors(id));
+    if (w > 0) cands.push_back({&n, w});
+  }
+  r.candidates = cands.size();
+  if (cands.empty()) return r;
+  std::sort(cands.begin(), cands.end(),
+            [](const Cand& a, const Cand& b) { return a.n->node_id < b.n->node_id; });
+  std::vector<double> prefix;
+  prefix.reserve(cands.size());
+  double acc = 0;
+  for (const auto& c : cands) prefix.push_back(acc += c.w);
+  const auto i = pick_weighted(prefix, u);
+  if (!i) return r;
+  const Cand& c = cands[*i];
+  r.pick = SelectResult::Pick{c.n->node_id, c.n->addr, c.w, c.w / acc};
+  return r;
 }
 
 std::string parse_peer_ip(std::string_view peer) {

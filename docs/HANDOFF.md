@@ -1,152 +1,119 @@
 # 交接文档
 
-更新时间：2026-11-13 15:55（UTC+8），M4 完成之后
+更新时间：2026-11-13 18:50（UTC+8）。M4 已提交并推送；M5（m5a + m5b）已实现并在虚拟机验收，**改动尚未提交**。
 
-## 一句话现状
+## 现状
 
-- **M0**：11 项任务完成 9 项。虚拟机上验证了自检、策略路由和 README 流程。
-  - 2.4 只差“经 ens192 访问外网收到应答”：ens192 是 VMware host-only 网络，连不了外网。
-  - 4.2 需要 3 台 Worker，目前只有 1 台。
-- **M1**：22 项任务完成 21 项。干净 clone 构建通过，虚拟机上的采集、部署、上报和故障恢复都已验证。
-  - 4.3 已完成：用户同意把磁盘阈值改为“与内核 io_ticks 误差 ≤ 0.05”，复验最大误差 0.006。
-  - 7.1 需要 3 台 Worker。
-- **M2**：17 项任务全部完成，虚拟机验收通过（`openspec/changes/m2-cpustat-kmod/`）。
-  - 读取耗时：共享页 11.7 ns，/proc/stat 7.7 µs，降低 99.8%。
-  - 加载卸载 1000 次无残留；1 毫秒周期跑 10 分钟 dmesg 无警告；重启后模块自动加载。
-  - kmemleak 没做：Ubuntu 默认内核未开启。
-- **M3**：16 项任务全部完成，虚拟机验收通过（`openspec/changes/m3-ebpf-runqlat/`）。
-  - 与 bcc runqlat 对比：负载下总变差距离 0.040、空闲时 0.036，P50、P99 比值都不超过 1.06。
-  - 拥挤验收：8 个线程挤在一个核上时，P99 从空闲的 87 µs 升到 22.5 ms。
-  - 开销：Worker 空闲 60 秒只用 0.16 秒 CPU；`sched pipe` 极端场景下约慢 5%。
-  - 归档顺序：先归档 M1，再归档 M3。
-- **M4**：15 项任务全部完成，虚拟机验收通过（`openspec/changes/m4-multi-nic/`）。
-  - ens192 注入 netem（丢包 10%、延迟 100ms）：RTT +100 ms、超时率 0.057、重传率 0.113；ens160 基本不变。
-  - 流量误差 0.03%；RTT 与 ping 相差 0.16 ms。
-  - 三项采集全开时，空闲 60 秒 Worker 只用 0.35 秒 CPU。
-  - 验收时在 Mac 上临时起过 TCP 接收端（172.16.13.1:18080），已停掉。
-- **提交状态**：M0–M3 已提交并推送（a7fe517、b99badf、790061f、1c64e22）。M4 的改动还在工作区，没有 commit，提交前先问用户。
+| 里程碑 | OpenSpec 变更 | 任务 | 提交 | 说明 |
+|---|---|---|---|---|
+| M0 环境 | `m0-environment` | 9/11 | a7fe517 | 剩 2.4（第二块网卡要能上外网）、4.2（要 3 台 Worker） |
+| M1 骨架 | `m1-skeleton` | 21/22 | b99badf | 剩 7.1（要 3 台 Worker） |
+| M2 内核模块 | `m2-cpustat-kmod` | 17/17 | 790061f | 虚拟机验收通过 |
+| M3 eBPF | `m3-ebpf-runqlat` | 16/16 | 1c64e22 | 虚拟机验收通过 |
+| M4 多网卡 | `m4-multi-nic` | 15/15 | 4c22841 | 虚拟机验收通过 |
+| M5 评分与选择 | `m5a-scoring` | 9/9 | 未提交 | 虚拟机验收通过 |
+| M5 任务流程 | `m5b-task-flow` | 12/12 | 未提交 | 虚拟机 + Mac 测试容器验收通过；3 台 Worker 到位后重做 5.4 |
 
-## 2026-11-13 这次做了什么
+- M5 的改动都在工作区里，没有提交（等用户开口）。建议一个提交包含 m5a 和 m5b（或各一个）。提交前检查别带上 `build-*`、`.env`。
+- 七个变更都还没有归档（`openspec/changes/archive/` 为空），`openspec/specs/` 也是空的。
+- **归档顺序有依赖**：M3 的 `manager-hot-storage` 增量依赖 M1 引入的能力，所以要先归档 M1，再归档 M3。M0 和 M1 有未完成的任务，归档前先问用户。
 
-- 2:25 的定时任务卡在第一条 Bash 的权限确认上，什么也没做。这次改由主会话手动完成。
-- **M1 6.3**：用 `git ls-files` 打包后在全新的 ubuntu:24.04 容器里按 README 构建，所有测试都通过。
-- **虚拟机 M0**：
-  - 1.2 通过。
-  - 2.4 部分通过：规则、幂等、出口网卡（tcpdump 确认）、ssh 不断、`--down` 恢复都没问题，只有 host-only 网卡无外网应答这一项不行。
-  - 4.1 通过，lm-policy-route 单元测完后已删除。
-- **虚拟机 M1**：
-  - install-worker.sh 部署成功。
-  - 虚拟机访问不了 Docker Hub，改为从 Mac 用 `docker save | ssh docker load` 把 redis、mysql、lm-manager 三个镜像传过去（方法已写进 deploy/README.md）。
-  - compose（项目 lm）在虚拟机上运行。
-  - 7.2 通过。
-- **修复：Worker 重连太慢**。gRPC 默认重连退避会长到数十秒，Manager 重启后 26 秒才恢复上报，改成最多 1 秒后实测 4.8 秒恢复。这些实现中的决定已补进 m1 的 design.md 第 9 节。
+## 关键验收数据（详细记录在各变更的 tasks.md 里）
 
-### 虚拟机当前状态（保留着，方便继续测）
+- **M1**：
+  - Manager 重启后 4.8 秒恢复上报。原来要 26 秒，修复方法是把 gRPC 重连退避上限压到 1 秒。
+  - Redis 恢复后 0.39 秒，节点数据重新开始更新。
+  - 磁盘利用率与内核 io_ticks 算出的值最大相差 0.006。阈值已按用户同意改为“误差 ≤ 0.05”。
+- **M2**：
+  - 共享页读一次 11.7 ns，`/proc/stat` 7.7 µs，耗时降低 99.8%。
+  - 加载卸载 1000 次无残留；1 毫秒周期跑 10 分钟无内核警告。
+  - kmemleak 没测：Ubuntu 默认内核没开这个功能。
+- **M3**：
+  - 与 bcc runqlat 对比，总变差距离：负载下 0.040，空闲时 0.036。
+  - 8 个线程挤在一个核上时，P99 从空闲的 87 µs 升到 22.5 ms。
+- **M4**：
+  - 给 ens192 注入 netem（丢包 10%、延迟 100ms）后，ens192 的 RTT 升高 100 ms、重传率 0.113；ens160 不受影响。
+  - 流量与 `/proc/net/dev` 相差 0.03%。
+- **开销**：三项采集全开时，空闲 60 秒 Worker 用 0.35 秒 CPU。
+- **M5a**：stress -c 4 时第 3 条满载样本后剔除（reason cpu），Allocate 返回 RESOURCE_EXHAUSTED；结束后第 5 条正常样本恢复。
+- **M5b**：两台节点（lm-worker-1 + Mac 上的测试容器）10 个/秒 sleep 0.2：
+  - stress -c 4 期间 lm-worker-1 占比从约 0.64 降到 0，结束后 5–10 秒回升；stress -c 2 期间 0.61 → 0.52。两组 2464 个任务无失败，P99 213 ms。
+  - Worker 被 SIGKILL 丢事件 → 300 秒后执行超时 3 次，f_timeout 0.2235；正常 restart 不丢事件。
+  - 任务子进程 CapEff/CapAmb 为 0。
 
-- **systemd**：`lm-worker` 在运行（M4 版本：读 cpustat 共享页，开着 eBPF 调度延迟和网卡探测）。`/etc/lm/worker.yaml` 末尾手工加了 `net.nics`：ens160 → 172.16.255.2、8.8.8.8；ens192 → 172.16.13.1，二进制在 `/opt/lm/bin/worker`，配置在 `/etc/lm/worker.yaml`，`manager_addr` 是 `127.0.0.1:50051`。
-- **cpustat 模块**：源码在 `/opt/lm/kmod/cpustat`，模块装在 `/lib/modules/6.8.0-149-generic/extra/`，由 `/etc/modules-load.d/cpustat.conf` 开机加载，udev 规则 `/etc/udev/rules.d/99-cpustat.rules`。
-- **docker compose**：项目 `lm` 在 `~/lm/deploy`（manager 镜像已更新为 M3 版本，会写 runq 字段），跑着 redis、mysql、manager。密码是随机生成的，在虚拟机的 `~/lm/deploy/.env` 里。
-- **已装的软件**：stress、fio、docker.io、docker-compose-v2、Worker 运行时库（含 libbpf1）、build-essential、linux-headers、bpfcc-tools（runqlat-bpfcc）、linux-tools（perf、bpftool）。
-- **策略路由**：已撤销，`ip rule` 恢复原样。`/opt/lm/deploy/policy-route.conf` 里写的是 `ens160` 和 `ens192 172.16.13.1`。
+## 下一步
 
-## 关键链接与环境
+1. **等用户确认后提交 M5**（m5a-scoring、m5b-task-flow），然后按顺序归档（M1 → M3 → 其余；M0、M1 有未完成任务，归档前先问）。
+2. **M6 节点状态机**：熔断器（正常/剔除/急救/慢启动）、急救双向流（`WorkerTask.Rescue`，1ms 探测，Worker 改内核刷新周期）、慢启动 f_slow、指数退避、低频探测（`Probe` 已在 m5b 实现）、灰色故障剔除（用 m5b 的“未确认”计数）。挂在 `manager/scheduler_loop.cpp` 上。验收 = 故障注入表里节点类故障全部符合期望，需要至少 2 台 Worker：可以沿用 Mac 上的 Docker 测试 Worker（见 m5b design 第 11 节），但“节点宕机/恢复”最好用真虚拟机。
+3. **等用户决定**：
+   - 是否把虚拟机第二块网卡改成 NAT 或桥接，以完成 M0 2.4。
+   - 是否再加 2 台 Worker，以完成 M0 4.2、M1 7.1，并重做 M5b 5.4、做 M6 验收。
+4. **后续里程碑**：M7 存储与看板、M8–M9 AI、M10 对照实验。
 
-| 项 | 值 |
-|----|----|
-| 开发文档（权威需求） | https://claude.ai/artifact/7gFfa9w6pxbuwo7WM1EYhN （docs 工具读取，正文较长，读成纯文本再看） |
-| GitHub | git@github.com:anwalld/monitor_system.git（用户自己的公开仓库，历史已清成单个初始提交） |
-| Ubuntu 虚拟机 | `ssh ubuntu@172.16.255.133`，见下表 |
-| OpenSpec 变更 | `openspec/changes/m0-environment/`、`openspec/changes/m1-skeleton/`，项目约定在 `openspec/config.yaml` |
-| Linux 构建镜像 | `lm-builder`（`deploy/docker/builder.Dockerfile`，Ubuntu 24.04 aarch64），产物在 `build-linux/` |
-
-Ubuntu 虚拟机（`ssh ubuntu@172.16.255.133`）：
+## 环境
 
 | 项 | 值 |
 |----|----|
-| 系统 | Ubuntu 24.04.5，内核 6.8.0-149，**aarch64**，4 核 |
-| 网卡 | ens160 172.16.255.133/24（ssh 走这块）、ens192 172.16.13.128/24 |
-| 权限 | sudo 免密，ssh 密钥登录可用 |
-| 数量 | 目前只有 1 台。文档要求 3 台 Worker 的验收项只能部分完成，要如实标注 |
+| 开发文档（权威需求） | https://claude.ai/artifact/7gFfa9w6pxbuwo7WM1EYhN 。用 docs 工具 export 成 markdown，返回 JSON 里的 `bytes_b64` 解码后就是正文。最近一次解码的副本在 scratchpad 的 `devdoc.md`（临时目录，可能已被清理） |
+| GitHub | git@github.com:anwalld/monitor_system.git（用户自己的公开仓库） |
+| 项目约定 | `openspec/config.yaml` |
+| Linux 构建镜像 | `lm-builder`（`deploy/docker/builder.Dockerfile`，Ubuntu 24.04 aarch64，含 clang、libbpf、bpftool）。产物在 `build-linux/`；TSan 构建在 `build-tsan/`（不含 Manager）和 `build-tsan-m/`（含 Manager，M5 起用这个查 Manager 并发） |
+| Ubuntu 虚拟机 | `ssh ubuntu@172.16.255.133`，见下 |
 
-因为虚拟机也是 aarch64，`lm-builder` 容器里编出的 `build-linux/worker/worker` 可以直接拷过去运行。
+常用命令（M5 起还有 `build/experiments/lm-bench allocate|submit`，见 README）：
 
-## 已完成
+```bash
+docker run --rm -v "$PWD":/src -w /src lm-builder bash -c 'cmake -S . -B build-linux -G Ninja && cmake --build build-linux && ctest --test-dir build-linux'
+deploy/install-worker.sh -m 127.0.0.1:50051 -u ubuntu 172.16.255.133      # 部署 Worker 和 cpustat 模块到虚拟机
+docker build -f deploy/docker/manager.Dockerfile -t lm-manager . && docker save lm-manager | gzip -1 | ssh ubuntu@172.16.255.133 'gunzip | sudo docker load'
+```
 
-### M0（11 项任务完成 7 项）
+### 虚拟机 lm-worker-1
 
-`deploy/` 下的文件：
-
-- `check-worker-host.sh`：Worker 主机自检
-- `policy-route.sh`：多网卡策略路由，附 `policy-route.conf.example`
-- `systemd/lm-policy-route.service`
-- `docker-compose.yml`：redis、mysql、manager 三个服务
-- `.env.example`
-- `mysql/init.sql`：六张表
-- `README.md`：搭建与验收步骤
-
-验证情况：
-
-- **策略路由**：在特权容器里用 dummy 网卡验证过，包括规则、幂等、推断失败不改动、`--down` 恢复、rp_filter 保存与恢复。
-- **compose**：30 秒内 healthy，表结构正确，down 再 up 后数据还在，缺密码时拒绝启动。
-- **一个坑**：`.env.example` 原来写了行内注释，会被当成密码，已改为注释单独一行。
-
-### M1（22 项任务完成 18 项）
-
-代码：
-
-- `proto/`：三个 proto 文件（package lm）
-- `common/`：`lm::Ring` 环形缓冲、`Config`、日志与 `RateLimiter`、时钟
-- `worker/collector/`：`CpuSource` 接口、`ProcCpuSource`、`CpuBusyCalculator`、内存与磁盘读取、`Collector` 线程
-- `worker/reporter/`：`Reporter` 线程
-- `worker/main.cpp`：支持 `--dry-run`
-- `manager/ingest/`：`NodeTable`、`CollectorService`
-- `manager/storage/`：`BoundedQueue`、`RedisWriter`
-- `manager/main.cpp`
-
-部署相关：
-
-- `deploy/docker/manager.Dockerfile`：多阶段构建
-- compose 里的 manager 服务：host 网络
-- `deploy/systemd/lm-worker.service`
-- `deploy/install-worker.sh`：会检查二进制与目标机架构是否一致
-- 配置样例：`config/worker.yaml`、`config/manager.yaml`
-- `README.md`：已按新架构重写
-
-实现中做的、design.md 里没写的决定（后续可以补进 design）：
-
-1. **Ring 只返回更新的样本**：`take_latest` 只返回比上次取到的更新的样本，所以读到的 seq 严格递增。
-2. **Reporter 错开半拍**：Reporter 首拍延迟半个周期（`Options::phase`）。原因是采集与上报周期相同、同时启动时，节拍抖动会导致漏报，实测 12 条只报了 8 条，修复后报 10 条（首尾两条属正常损失）。
-3. **redis-plus-plus 从源码构建**：Ubuntu 24.04 和 Homebrew 都没有这个包，CMake 用 FetchContent 构建，并手动补了生成头文件的路径和 hiredis 链接。
-4. **TSan 下跳过 gRPC 测试**：系统包的 gRPC 和 absl 没用 TSan 编译，误报很多。所以 TSan 构建不注册用到 gRPC 的测试（`test_worker_rpc`、`test_manager_rpc`），其余测试都在 TSan 下跑。抑制规则在 configure 时按实际库自动生成。
-5. **Redis 地址可用环境变量覆盖**：Manager 支持用 `LM_REDIS_URI` 覆盖配置。compose 里用它指向 `127.0.0.1:${REDIS_PORT}`。
-
-### 刚修掉、还没复验的问题
-
-- 旧 `.gitignore` 里有一行 `cmake/`，会让 `cmake/grpc.cmake` 不进仓库，干净 clone 后无法构建。这一行已删除，但还没复验（见下一步第 1 条）。
-
-## 下一步（按顺序）
-
-1. **等用户决定**：
-   - 是否提交并推送 M4。不要自行 commit 或 push。
-   - 是否把虚拟机第二块网卡从 host-only 改成 NAT 或桥接（改了才能完整验收 2.4），以及是否再加 2 台 Worker（4.2 和 7.1 要 3 台）。
-2. **用户加了虚拟机后**：用 `install-worker.sh -m <manager>:50051 -u ubuntu <ip...>` 部署，补测 M0 4.2 和 M1 7.1。每台都要先跑 `check-worker-host.sh`，再配策略路由。
-3. **M5 规划**（调度）：用 openspec-propose 生成 `m5-scheduling`。内容按开发文档“Manager 实现”里的评分、剔除、选择、在途任务账，以及 task.proto 的 Scheduler/WorkerTask 和压测客户端。这是最大的一个里程碑，可能需要拆成两个变更：
-   - 评分、剔除、选择。
-   - 任务流程与在途账，加上 Worker 的 WorkerTask 服务。
-
-   验收：单元测试全过；本地负载出现时任务自动转移。
-4. **之后按里程碑表推进**：M6 节点状态机、M7 存储与看板……
+- **系统**：Ubuntu 24.04.5，内核 6.8.0-149，aarch64，4 核。sudo 免密，ssh 用密钥登录。和构建镜像是同一架构，容器里编出的二进制可以直接拷过去用。
+- **网卡**：
+  - ens160：172.16.255.133，NAT，ssh 走这块，网关 172.16.255.2。
+  - ens192：172.16.13.128，VMware host-only，只能到 Mac 宿主机 172.16.13.1。
+- **访问不了 Docker Hub**：镜像要从 Mac 用 `docker save | ssh docker load` 传过去。
+- **Worker**：systemd 单元 `lm-worker`（用户 lm），运行的是 M5 版本（旧配置备份在 `/etc/lm/worker.yaml.m4.bak`）：
+  - CPU 读 cpustat 共享页。
+  - eBPF 调度延迟采集已启用。
+  - 网卡探测已启用。`/etc/lm/worker.yaml` 末尾手工加了 `net.nics`：ens160 → 172.16.255.2、8.8.8.8；ens192 → 172.16.13.1。
+  - `manager_addr` 改成了 172.16.255.133:50051（原来是 127.0.0.1，Manager 会把回环地址当作 Worker 地址发给客户端）。
+  - 任务服务已开启：白名单 /bin/sleep、/usr/bin/stress、/bin/grep、/bin/sh，随机 token 在配置文件里（640 root:lm）。Mac 上取 token：`ssh ubuntu@172.16.255.133 'sudo grep token: /etc/lm/worker.yaml'`。
+- **cpustat 模块**：源码在 `/opt/lm/kmod/cpustat`，模块在 `/lib/modules/6.8.0-149-generic/extra/`。开机由 `/etc/modules-load.d/cpustat.conf` 加载，udev 规则是 `/etc/udev/rules.d/99-cpustat.rules`。
+- **compose 项目 `lm`**：在 `~/lm/deploy`，跑着 redis、mysql、manager（M5 版本镜像；回滚用的旧镜像标签 `lm-manager:m3`、`lm-manager:m5a`）。密码是随机生成的，在 `~/lm/deploy/.env`。
+- **策略路由**：目前未启用。`/opt/lm/deploy/policy-route.conf` 写的是 `ens160` 和 `ens192 172.16.13.1`。
+- **已装的软件**：stress、fio、docker、Worker 运行时库（含 libbpf1）、build-essential、linux-headers、bpfcc-tools（runqlat-bpfcc）、linux-tools（perf、bpftool）。
 
 ## 注意事项
 
-- **定时任务**：无人值守运行时会卡在权限确认上。下次设定时任务前，先提醒用户在应用里给任务设置权限模式，或者先点一次“Run now”把要用的命令批准掉。
-- 用户习惯：中文、简短、异步。能自己决定的就决定，把决定写进 design.md 后汇报，不要因为小问题停下来等。
-- **虚拟机计时器**：arm64 计时器一跳约 41 ns，测纳秒级耗时要分批计时（见 m2 design 第 11 节）。
-- **8.8.8.8 经 NAT 约丢 11%**：作为探测目标时有固定的超时率，判断网卡是否劣化要看变化量。
-- **proto JSON 的 uint64 是字符串**：`rx_bps`、`tx_bps` 等字段要转数字再算。
-- **worker 日志在 stderr**：M3 起所有组件的日志写 stderr，`--dry-run` 的 stdout 是纯 JSON。
-- **后台命令里的 `wait`**：脚本里有后台 stress 时，`wait` 会连它一起等，导致卡住。要用 `wait <pid>`。
-- **macOS 上的命令**：zsh 不会把 `$VAR` 按空格拆成多个参数，需要多个参数时用 bash 脚本文件。
-- **docker exec 吃标准输入**：在 heredoc 里调用 `docker exec` 会读走后面的脚本，要加 `</dev/null` 或改用脚本文件。
-- **清理测试容器**：`lmtest-*` 系列容器、卷、网络用完都要删掉。用户自己的 compose 项目名是 `lm`，不要动。
-- 旧 git 历史的备份在旧 scratchpad 里：`/private/tmp/claude-501/-Users-mima0000--claude-spares-spare-QCgCC7/aac8d5c9-c883-49f8-81c7-591bfb84aeb4/scratchpad/monitor_system_old_history.bundle`（临时目录，可能已被清理）。
+**和用户协作**
+- 用户用中文，消息简短，异步协作。能自己决定的就决定，把决定写进 design.md 后再汇报，不要因为小问题停下来等。
+- commit 和 push 要等用户开口。每个里程碑单独一个提交，提交前检查有没有把 `.env`、`build-*`、`vmlinux.h`、skeleton 头文件带进去。
+- 定时任务无人值守时会卡在权限确认上。下次设定时任务前，先提醒用户配好权限。
+
+**虚拟机上测试**
+- 不能弄断 ens160 的 ssh。改路由或流量控制之前，先用 `systemd-run --on-active=Nmin` 设好自动撤销。
+- 经 ens192 的 TCP 测试只能连 Mac。可以在 Mac 上临时起一个只监听 172.16.13.1 的接收端，测完就停。
+- 8.8.8.8 经 NAT 本身约丢 11%。用它作为探测目标时，判断网卡是否劣化要看变化量，不能看绝对值。
+- arm64 计时器一跳约 41 ns，测纳秒级耗时要分批计时。
+
+**M5 测试**
+- 第二个节点：Mac 上 `docker run -d --name lmtest-worker2 -p 50052:50052 -v "$PWD/build-linux":/b:ro -v <worker2.yaml>:/w.yaml:ro lm-builder /b/worker/worker -c /w.yaml`，配置 `cpu_source: proc`、`runq: off`、`nic_probe: off`、`manager_addr: 172.16.255.133:50051`、task 段与虚拟机相同 token。Manager 看到的地址是 172.16.255.1:50052。测完删掉。
+- `lm-bench allocate -n N` 会在 Manager 账上留下 N 个 ALLOCATED 任务，30 秒后才作废，期间会压低 f_inflight；做占比测试前先等 30 秒。
+- 8.8.8.8 丢包让 ens160 网络分偏低，所以 lm-worker-1 满分约 0.92，不是 1.0。
+
+**数据与输出格式**
+- proto 的 JSON 输出里，uint64 字段是字符串，比如 `rx_bps`、`tx_bps`、`seq`，要先转成数字再算。
+- 所有组件的日志都写 stderr，`worker --dry-run` 的 stdout 是纯 JSON。
+
+**macOS 与 Docker**
+- zsh 不会把 `$VAR` 按空格拆成多个参数，需要多个参数时改用 bash 脚本文件。
+- 在 heredoc 里调用 `docker exec` 会读走后面的脚本，要加 `</dev/null`。
+- 脚本里有后台进程时，要用 `wait <pid>`。直接 `wait` 会连后台的 stress 也一起等，导致卡住。
+- 测试用的容器、卷、网络统一用 `lmtest-` 前缀，用完删掉。用户自己的 compose 项目叫 `lm`，不要动。
+- 本地 `build/` 里如果出现重复注册的测试（ctest 数量翻倍），删掉 `build/tests/*_include.cmake` 和 `*_tests.cmake` 后重新 configure。
+
+**其他**
+- 旧 git 历史的备份：`/private/tmp/claude-501/-Users-mima0000--claude-spares-spare-QCgCC7/aac8d5c9-c883-49f8-81c7-591bfb84aeb4/scratchpad/monitor_system_old_history.bundle`（32 MB，在临时目录里，随时可能被清理）。
