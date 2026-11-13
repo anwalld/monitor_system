@@ -1,7 +1,8 @@
 #pragma once
 
 // 调度主循环：每 100 ms 处理在途账的超时链表头，每秒更新在途基线、衰减超时计数 T。
-// 锁内只收集过期任务，日志在锁外打（限频）。M6 的状态机和低频探测也挂在这里。
+// 每 100 ms 还评估节点状态机（M6）：状态变化交给 StateSink（打日志、写 Redis），需要急救的节点交给
+// RescueManager 启动会话，并回收已结束的会话。锁内只收集结果，日志与会话启动都在锁外。
 
 #include <atomic>
 #include <chrono>
@@ -9,6 +10,8 @@
 #include <thread>
 #include <vector>
 
+#include "breaker/prober.h"
+#include "breaker/rescue_session.h"
 #include "ingest/node_table.h"
 
 namespace lm::manager {
@@ -20,7 +23,9 @@ class SchedulerLoop {
     std::chrono::milliseconds second{1000};
   };
 
-  SchedulerLoop(NodeTable& table, Options opt) : table_(table), opt_(opt) {}
+  SchedulerLoop(NodeTable& table, Options opt, StateSink sink = {},
+                RescueManager* rescue = nullptr)
+      : table_(table), opt_(opt), sink_(std::move(sink)), rescue_(rescue) {}
   ~SchedulerLoop() { stop(); }
 
   void start();
@@ -38,6 +43,10 @@ class SchedulerLoop {
 
   NodeTable& table_;
   const Options opt_;
+  StateSink sink_;
+  RescueManager* rescue_;
+  std::vector<StateChange> changes_;
+  std::vector<RescueStart> rescues_;
   int64_t last_second_ms_ = -1;
   std::vector<InflightLedger::Expired> expired_;
   int detail_budget_ = 10;  // 本秒内还能逐条记录的超时任务数

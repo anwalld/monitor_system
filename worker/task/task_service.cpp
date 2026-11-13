@@ -36,6 +36,7 @@ TaskConfig TaskConfig::parse(const lm::Config& cfg, unsigned ncpu, const char* e
   c.default_timeout_s = cfg.get<uint32_t>("task.default_timeout_s", c.default_timeout_s);
   c.max_timeout_s = cfg.get<uint32_t>("task.max_timeout_s", c.max_timeout_s);
   c.output_tail_bytes = cfg.get<std::size_t>("task.output_tail_bytes", c.output_tail_bytes);
+  c.rescue_max_s = cfg.get<uint32_t>("task.rescue_max_s", c.rescue_max_s);
   const YAML::Node list = cfg.node("task.allowed_commands");
   if (list.IsDefined() && !list.IsNull()) {
     if (!list.IsSequence()) throw lm::ConfigError("配置项 task.allowed_commands 必须是列表");
@@ -49,6 +50,7 @@ TaskConfig TaskConfig::parse(const lm::Config& cfg, unsigned ncpu, const char* e
   }
   if (c.max_concurrent < 0) throw lm::ConfigError("配置项 task.max_concurrent 不能为负");
   if (c.max_concurrent == 0) c.max_concurrent = static_cast<int>(2 * (ncpu == 0 ? 1 : ncpu));
+  if (c.rescue_max_s == 0) throw lm::ConfigError("配置项 task.rescue_max_s 必须大于 0");
   if (c.default_timeout_s == 0) throw lm::ConfigError("配置项 task.default_timeout_s 必须大于 0");
   if (c.max_timeout_s < c.default_timeout_s) {
     throw lm::ConfigError("配置项 task.max_timeout_s 不能小于 task.default_timeout_s");
@@ -56,10 +58,11 @@ TaskConfig TaskConfig::parse(const lm::Config& cfg, unsigned ncpu, const char* e
   return c;
 }
 
-TaskService::TaskService(TaskConfig cfg, EventSender& events)
+TaskService::TaskService(TaskConfig cfg, EventSender& events, RescueSampler* sampler)
     : cfg_(std::move(cfg)),
       allowed_(cfg_.allowed_commands.begin(), cfg_.allowed_commands.end()),
-      events_(events) {}
+      events_(events),
+      sampler_(sampler) {}
 
 void TaskService::emit(const std::string& task_id, lm::TaskEvent::Kind kind, uint32_t exec_ms) {
   lm::TaskEvent e;
@@ -129,6 +132,38 @@ grpc::Status TaskService::Probe(grpc::ServerContext* /*ctx*/, const lm::ProbeReq
                                 lm::ProbeResp* resp) {
   resp->set_seq(req->seq());
   return grpc::Status::OK;
+}
+
+grpc::Status TaskService::Rescue(grpc::ServerContext* ctx,
+                                 grpc::ServerReaderWriter<lm::RescueResp, lm::RescueReq>* stream) {
+  if (sampler_ == nullptr) return {grpc::StatusCode::UNIMPLEMENTED, "本 Worker 未启用急救"};
+  std::unique_lock<std::mutex> lk(rescue_mu_, std::try_to_lock);
+  if (!lk.owns_lock()) return {grpc::StatusCode::ABORTED, "已有一条急救流"};
+  rescue_active_.store(true);
+  rescues_.fetch_add(1, std::memory_order_relaxed);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(cfg_.rescue_max_s);
+  uint64_t n = 0;
+  grpc::Status result = grpc::Status::OK;
+  lm::RescueReq req;
+  while (stream->Read(&req)) {
+    if (n == 0) sampler_->begin();  // 第一条请求到达时切到 1 ms 刷新
+    ++n;
+    if (std::chrono::steady_clock::now() >= deadline) {
+      result = {grpc::StatusCode::DEADLINE_EXCEEDED,
+                "急救超过 " + std::to_string(cfg_.rescue_max_s) + " 秒上限"};
+      break;
+    }
+    lm::RescueResp resp;
+    resp.set_seq(req.seq());
+    resp.set_send_ts_us(req.send_ts_us());
+    *resp.mutable_sample() = sampler_->sample();
+    if (!stream->Write(resp)) break;
+    if (ctx->IsCancelled()) break;
+  }
+  if (sampler_->active()) sampler_->end();
+  rescue_active_.store(false);
+  spdlog::info("急救流结束：收到 {} 条请求（{}）", n, result.ok() ? "正常" : result.error_message());
+  return result;
 }
 
 bool clear_ambient_caps(std::string* err) {

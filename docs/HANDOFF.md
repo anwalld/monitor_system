@@ -1,6 +1,6 @@
 # 交接文档
 
-更新时间：2026-11-13 18:50（UTC+8）。M4 已提交并推送；M5（m5a + m5b）已实现并在虚拟机验收，**改动尚未提交**。
+更新时间：2026-11-14 01:05（UTC+8）。M0–M6 都已提交并推送；下一个是 M7 存储与看板。
 
 ## 现状
 
@@ -11,11 +11,12 @@
 | M2 内核模块 | `m2-cpustat-kmod` | 17/17 | 790061f | 虚拟机验收通过 |
 | M3 eBPF | `m3-ebpf-runqlat` | 16/16 | 1c64e22 | 虚拟机验收通过 |
 | M4 多网卡 | `m4-multi-nic` | 15/15 | 4c22841 | 虚拟机验收通过 |
-| M5 评分与选择 | `m5a-scoring` | 9/9 | 未提交 | 虚拟机验收通过 |
-| M5 任务流程 | `m5b-task-flow` | 12/12 | 未提交 | 虚拟机 + Mac 测试容器验收通过；3 台 Worker 到位后重做 5.4 |
+| M5 评分与选择 | `m5a-scoring` | 9/9 | 441c7a8 | 虚拟机验收通过 |
+| M5 任务流程 | `m5b-task-flow` | 12/12 | 441c7a8 | 虚拟机 + Mac 测试容器验收通过；3 台 Worker 到位后重做 5.4 |
+| M6 节点状态机 | `m6-node-state-machine` | 16/16 | 见 git log | 虚拟机 + Mac 测试容器验收通过；3 台 Worker 到位后用关机重做 4.3、4.4 |
 
-- M5 的改动都在工作区里，没有提交（等用户开口）。建议一个提交包含 m5a 和 m5b（或各一个）。提交前检查别带上 `build-*`、`.env`。
-- 七个变更都还没有归档（`openspec/changes/archive/` 为空），`openspec/specs/` 也是空的。
+- 用户 2026-11-14 授权：后续里程碑不用再问，验收完就提交并推送（见记忆 autonomous-milestones）。提交前检查别带上 `build-*`、`.env`。
+- 八个变更都还没有归档（`openspec/changes/archive/` 为空），`openspec/specs/` 也是空的。
 - **归档顺序有依赖**：M3 的 `manager-hot-storage` 增量依赖 M1 引入的能力，所以要先归档 M1，再归档 M3。M0 和 M1 有未完成的任务，归档前先问用户。
 
 ## 关键验收数据（详细记录在各变更的 tasks.md 里）
@@ -40,15 +41,14 @@
   - stress -c 4 期间 lm-worker-1 占比从约 0.64 降到 0，结束后 5–10 秒回升；stress -c 2 期间 0.61 → 0.52。两组 2464 个任务无失败，P99 213 ms。
   - Worker 被 SIGKILL 丢事件 → 300 秒后执行超时 3 次，f_timeout 0.2235；正常 restart 不丢事件。
   - 任务子进程 CapEff/CapAmb 为 0。
+- **M6**：Worker 进程停止 2.7 秒剔除（probe 先于 lost），无急救；恢复 5.7 秒进入慢启动，正好 5 分钟后正常；丢 50052 包 2.9 秒剔除、删规则 1.6 秒恢复；执行超时触发自动急救 2.2 秒结束（T 8 → 0.87）；间歇故障急救 0.5 秒结束（353 次超时、1 次网络事件）。
 
 ## 下一步
 
-1. **等用户确认后提交 M5**（m5a-scoring、m5b-task-flow），然后按顺序归档（M1 → M3 → 其余；M0、M1 有未完成任务，归档前先问）。
-2. **M6 节点状态机**：熔断器（正常/剔除/急救/慢启动）、急救双向流（`WorkerTask.Rescue`，1ms 探测，Worker 改内核刷新周期）、慢启动 f_slow、指数退避、低频探测（`Probe` 已在 m5b 实现）、灰色故障剔除（用 m5b 的“未确认”计数）。挂在 `manager/scheduler_loop.cpp` 上。验收 = 故障注入表里节点类故障全部符合期望，需要至少 2 台 Worker：可以沿用 Mac 上的 Docker 测试 Worker（见 m5b design 第 11 节），但“节点宕机/恢复”最好用真虚拟机。
-3. **等用户决定**：
-   - 是否把虚拟机第二块网卡改成 NAT 或桥接，以完成 M0 2.4。
-   - 是否再加 2 台 Worker，以完成 M0 4.2、M1 7.1，并重做 M5b 5.4、做 M6 验收。
-4. **后续里程碑**：M7 存储与看板、M8–M9 AI、M10 对照实验。
+1. **M7 存储与看板**：冷热分层（5 分钟聚合写 MySQL `node_metrics_5m`、`task` 表）、`stream:events`（状态变化、急救等事件）、Drogon REST + WebSocket、Vue 3 看板、断线重连不丢不重。按开发文档“冷热分层”“Web 看板”两节和 MySQL 表结构（`deploy/mysql/init.sql`）写。范围大，可能拆成 m7a（存储与事件）和 m7b（API 与看板）。
+2. **归档**：八个变更都没归档。顺序 M1 → M3 → 其余；M0、M1 有未完成任务（要更多 Worker）。
+3. **等用户决定**：第二块网卡能否上外网（M0 2.4）；是否再加 2 台 Worker（M0 4.2、M1 7.1、重做 M5b 5.4、M6 4.3/4.4 用真关机）。
+4. **后续里程碑**：M8–M9 AI、M10 对照实验。
 
 ## 环境
 
@@ -75,14 +75,14 @@ docker build -f deploy/docker/manager.Dockerfile -t lm-manager . && docker save 
   - ens160：172.16.255.133，NAT，ssh 走这块，网关 172.16.255.2。
   - ens192：172.16.13.128，VMware host-only，只能到 Mac 宿主机 172.16.13.1。
 - **访问不了 Docker Hub**：镜像要从 Mac 用 `docker save | ssh docker load` 传过去。
-- **Worker**：systemd 单元 `lm-worker`（用户 lm），运行的是 M5 版本（旧配置备份在 `/etc/lm/worker.yaml.m4.bak`）：
+- **Worker**：systemd 单元 `lm-worker`（用户 lm），运行的是 M6 版本（旧配置备份在 `/etc/lm/worker.yaml.m4.bak`）：
   - CPU 读 cpustat 共享页。
   - eBPF 调度延迟采集已启用。
   - 网卡探测已启用。`/etc/lm/worker.yaml` 末尾手工加了 `net.nics`：ens160 → 172.16.255.2、8.8.8.8；ens192 → 172.16.13.1。
   - `manager_addr` 改成了 172.16.255.133:50051（原来是 127.0.0.1，Manager 会把回环地址当作 Worker 地址发给客户端）。
   - 任务服务已开启：白名单 /bin/sleep、/usr/bin/stress、/bin/grep、/bin/sh，随机 token 在配置文件里（640 root:lm）。Mac 上取 token：`ssh ubuntu@172.16.255.133 'sudo grep token: /etc/lm/worker.yaml'`。
 - **cpustat 模块**：源码在 `/opt/lm/kmod/cpustat`，模块在 `/lib/modules/6.8.0-149-generic/extra/`。开机由 `/etc/modules-load.d/cpustat.conf` 加载，udev 规则是 `/etc/udev/rules.d/99-cpustat.rules`。
-- **compose 项目 `lm`**：在 `~/lm/deploy`，跑着 redis、mysql、manager（M5 版本镜像；回滚用的旧镜像标签 `lm-manager:m3`、`lm-manager:m5a`）。密码是随机生成的，在 `~/lm/deploy/.env`。
+- **compose 项目 `lm`**：在 `~/lm/deploy`，跑着 redis、mysql、manager（M6 版本镜像；回滚用的旧镜像标签 `lm-manager:m3`、`m5a`、`m5`）。密码是随机生成的，在 `~/lm/deploy/.env`。
 - **策略路由**：目前未启用。`/opt/lm/deploy/policy-route.conf` 写的是 `ens160` 和 `ens192 172.16.13.1`。
 - **已装的软件**：stress、fio、docker、Worker 运行时库（含 libbpf1）、build-essential、linux-headers、bpfcc-tools（runqlat-bpfcc）、linux-tools（perf、bpftool）。
 
@@ -99,7 +99,10 @@ docker build -f deploy/docker/manager.Dockerfile -t lm-manager . && docker save 
 - 8.8.8.8 经 NAT 本身约丢 11%。用它作为探测目标时，判断网卡是否劣化要看变化量，不能看绝对值。
 - arm64 计时器一跳约 41 ns，测纳秒级耗时要分批计时。
 
-**M5 测试**
+**M5/M6 测试**
+- M6 起 Manager 每秒探测 Worker 的 50052：测试 Worker 必须开任务服务。Manager 重启后所有节点慢启动 5 分钟，要等它们回到 normal 才能测急救（急救只从 normal 触发）。
+- 造 T 的方法：暂停测试 Worker（`docker pause`）让它被剔除，向 lm-worker-1 提交比执行超时长的任务（`--args 400 --timeout 400`），300 秒后记执行超时。并发上限 8。
+- 间歇故障脚本可参考 m6 tasks 4.6：在虚拟机上等日志出现“开始急救”再每 500 ms 加删 iptables 规则（先 `systemd-run --on-active` 设自动撤销）。
 - 第二个节点：Mac 上 `docker run -d --name lmtest-worker2 -p 50052:50052 -v "$PWD/build-linux":/b:ro -v <worker2.yaml>:/w.yaml:ro lm-builder /b/worker/worker -c /w.yaml`，配置 `cpu_source: proc`、`runq: off`、`nic_probe: off`、`manager_addr: 172.16.255.133:50051`、task 段与虚拟机相同 token。Manager 看到的地址是 172.16.255.1:50052。测完删掉。
 - `lm-bench allocate -n N` 会在 Manager 账上留下 N 个 ALLOCATED 任务，30 秒后才作废，期间会压低 f_inflight；做占比测试前先等 30 秒。
 - 8.8.8.8 丢包让 ens160 网络分偏低，所以 lm-worker-1 满分约 0.92，不是 1.0。

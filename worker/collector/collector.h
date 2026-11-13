@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
@@ -51,6 +52,9 @@ class Collector {
 
   uint64_t samples_published() const { return seq_.load(std::memory_order_relaxed); }
 
+  // 最近一次发布的样本的副本（急救线程用：环形缓冲是单消费者，不能再从里面取）。没有样本时返回空样本。
+  lm::Sample latest() const;
+
  private:
   void run();
   std::optional<RunqStats> read_runq();
@@ -75,6 +79,9 @@ class Collector {
   int disk_fails_ = 0;
   int cpu_fails_ = 0;
   std::atomic<uint64_t> seq_{0};
+
+  mutable std::mutex latest_mu_;
+  lm::Sample latest_;
 
   std::atomic<bool> running_{false};
   std::thread thread_;

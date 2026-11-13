@@ -32,6 +32,7 @@ void SchedulerLoop::start() {
 void SchedulerLoop::stop() {
   if (!running_.exchange(false)) return;
   if (thread_.joinable()) thread_.join();
+  if (rescue_ != nullptr) rescue_->stop();
 }
 
 void SchedulerLoop::tick_once(int64_t now_mono_ms) {
@@ -66,6 +67,18 @@ void SchedulerLoop::tick_once(int64_t now_mono_ms) {
     }
   }
   if (skipped > 0) spdlog::warn("另有 {} 个任务超时，日志已省略", skipped);
+
+  // 节点状态机
+  changes_.clear();
+  rescues_.clear();
+  table_.tick_states(now_mono_ms, lm::wall_ms(), &changes_, &rescues_);
+  if (sink_) {
+    for (const auto& c : changes_) sink_(c);
+  }
+  if (rescue_ != nullptr) {
+    rescue_->reap();
+    for (const auto& r : rescues_) rescue_->launch(r);
+  }
 }
 
 void SchedulerLoop::run() {

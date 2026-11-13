@@ -65,6 +65,7 @@ int main(int argc, char** argv) {
     topt.worker_port = static_cast<uint16_t>(cfg.get<int>("worker_port", 50052));
     topt.scoring = lm::manager::ScoringParams::from_config(cfg);
     topt.inflight = lm::manager::InflightParams::from_config(cfg);
+    topt.breaker = lm::manager::BreakerParams::from_config(cfg);
   } catch (const lm::ConfigError& e) {
     spdlog::critical("{}", e.what());
     return 2;
@@ -97,8 +98,31 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
   writer.start();
-  lm::manager::SchedulerLoop loop(table, {});
+  // 状态变化：打日志，并推一条只含状态的记录给存储线程（失联节点也能在 Redis 里看到状态）
+  lm::manager::StateSink sink = [&queue](const lm::manager::StateChange& c) {
+    if (c.from == c.to) return;  // 新节点首次登记已随样本写入
+    const char* to = lm::manager::mode_name(c.to);
+    if (c.to == lm::manager::NodeMode::kEvicted) {
+      spdlog::warn("节点 {} 状态 {} → {}（{}）", c.node_id, lm::manager::mode_name(c.from), to,
+                   c.reason);
+    } else {
+      spdlog::info("节点 {} 状态 {} → {}", c.node_id, lm::manager::mode_name(c.from), to);
+    }
+    lm::manager::AcceptedSample a;
+    a.state_only = true;
+    a.node_id = c.node_id;
+    a.mode = c.to;
+    a.mode_reason = c.reason;
+    a.mode_since_wall_ms = c.since_wall_ms;
+    a.f_slow = c.f_slow;
+    a.probe_fail_streak = c.probe_fail_streak;
+    queue.push(std::move(a));
+  };
+  lm::manager::RescueManager rescue(table, topt.breaker.rescue, sink);
+  lm::manager::SchedulerLoop loop(table, {}, sink, &rescue);
+  lm::manager::Prober prober(table, topt.breaker, sink);
   loop.start();
+  prober.start();
   spdlog::info("manager 启动，gRPC 监听 {}，Redis {}", listen, ropt.uri);
 
   auto next_report = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -108,9 +132,9 @@ int main(int argc, char** argv) {
       const auto c = table.counts(lm::mono_ms());
       const auto t = table.inflight_totals();
       spdlog::info(
-          "节点 在线 {}/{}，累计接受 {} 条，乱序丢弃 {} 条，存储队列 {}（丢弃 {}），Redis 错误 {}，"
+          "节点 在线 {}/{}（慢启动 {}、正常 {}、剔除 {}、急救 {}），累计接受 {} 条，乱序丢弃 {} 条，存储队列 {}（丢弃 {}），Redis 错误 {}，"
           "分配 {} 次，拒绝 {} 次，在途 {}，作废 {}，未确认 {}，执行超时 {}，迟到事件 {}",
-          c.online, c.total, collector.accepted(), collector.stale(), queue.size(), queue.dropped(),
+          c.online, c.total, c.slow_start, c.normal, c.evicted, c.rescue, collector.accepted(), collector.stale(), queue.size(), queue.dropped(),
           writer.write_errors(), scheduler.allocated(), scheduler.rejected(), t.inflight, t.voided,
           t.unconfirmed, t.exec_timeouts, t.late_events);
       next_report += std::chrono::seconds(10);
@@ -119,6 +143,7 @@ int main(int argc, char** argv) {
 
   spdlog::info("收到退出信号，正在停止");
   server->Shutdown(std::chrono::system_clock::now() + std::chrono::seconds(2));
+  prober.stop();
   loop.stop();
   writer.stop();
   return 0;

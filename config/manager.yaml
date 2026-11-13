@@ -31,3 +31,26 @@ inflight:                      # 在途任务账（M5）
   baseline_tau_s: 60           # 在途基线指数平滑的时间常数
   base_tasks_floor: 2          # 在途任务数基线下限
   base_bytes_floor: 1048576    # 在途字节数基线下限
+breaker:                       # 节点状态机（M6）：慢启动、剔除、急救、低频探测
+  slow_start_s: 300            # 慢启动时长，权重从 slow_start_from 线性升到 1
+  slow_start_from: 0.2
+  recover_reports: 5           # 剔除后连续多少条正常上报才恢复
+  probe_interval_ms: 1000      # 低频探测（WorkerTask.Probe）周期
+  probe_timeout_ms: 500
+  probe_fail_evict: 3          # 连续探测失败次数达到即剔除
+  gray_window_s: 300           # 未确认比例的统计窗口
+  gray_min_samples: 20
+  gray_factor: 3               # 节点未确认比例 > gray_factor × 全体比例
+  gray_min_ratio: 0.2          # 且不小于该值才算灰色故障
+  rescue:
+    min_score: 0.6             # 分数低于此值不急救
+    prob_factor: 0.5           # 选中概率 < prob_factor / N 才急救
+    interval_ms: 1             # 急救请求间隔
+    timeout_ms: 10             # 单条请求超时
+    batch_ms: 100              # 每批结算间隔
+    max_s: 10                  # 急救最长时长
+    t_decay: 0.9               # 成功批 T 乘以该值
+    epsilon_factor: 0.125      # 失败时目标下调步长 ε = epsilon_factor / N
+    backoff_min_s: 300         # 急救退避 5、10、20 … 分钟
+    backoff_max_s: 3600
+    backoff_half_life_s: 86400 # 退避级别的半衰期

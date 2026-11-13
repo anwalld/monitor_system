@@ -91,6 +91,7 @@ nic_probe: auto                # 网卡探测（ICMP + TCP 重传 + 流量）：
 #   default_timeout_s: 300     # 请求的 timeout_s 为 0 时使用
 #   max_timeout_s: 3600
 #   output_tail_bytes: 4096
+#   rescue_max_s: 15           # 一条急救流（M6）的最长时长
 log_level: info
 EOF
 )"

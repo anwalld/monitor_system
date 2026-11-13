@@ -6,6 +6,11 @@
 
 namespace lm::worker {
 
+lm::Sample Collector::latest() const {
+  std::lock_guard<std::mutex> lk(latest_mu_);
+  return latest_;
+}
+
 namespace {
 constexpr int kErrorAfterFails = 10;
 }
@@ -150,6 +155,10 @@ bool Collector::collect_once() {
   }
 
   ring_.publish(s);
+  {
+    std::lock_guard<std::mutex> lk(latest_mu_);
+    latest_ = s;
+  }
   seq_.fetch_add(1, std::memory_order_relaxed);
   return true;
 }

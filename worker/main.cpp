@@ -150,6 +150,7 @@ int main(int argc, char** argv) {
 
   auto cpu_source = make_cpu_source(cpu_mode);
   if (!cpu_source) return 1;
+  lm::worker::CpuSource* cpu_source_raw = cpu_source.get();  // 只用于判断类型（急救用同类来源）
 
   // 调度延迟（eBPF runqlat）：auto 失败只警告不填字段；on 失败退出；off 不加载
   std::shared_ptr<lm::worker::RunqProbe> runq;
@@ -234,6 +235,7 @@ int main(int argc, char** argv) {
 
   std::unique_ptr<lm::worker::Reporter> reporter;
   std::unique_ptr<lm::worker::EventSender> events;
+  std::unique_ptr<lm::worker::RescueSampler> rescue_sampler;
   std::unique_ptr<lm::worker::TaskService> task_service;
   std::unique_ptr<grpc::Server> task_server;
   if (dry_run) {
@@ -268,7 +270,16 @@ int main(int argc, char** argv) {
         return 1;
       }
       events = std::make_unique<lm::worker::EventSender>(channel, lm::worker::EventSender::Options{});
-      task_service = std::make_unique<lm::worker::TaskService>(task_cfg, *events);
+      // 急救：独立的 CPU 来源（与采集线程同类型），其余字段取采集线程的最新样本
+      const bool use_shm = dynamic_cast<lm::worker::ShmCpuSource*>(cpu_source_raw) != nullptr;
+      rescue_sampler = std::make_unique<lm::worker::RescueSampler>(
+          [use_shm]() -> std::unique_ptr<lm::worker::CpuSource> {
+            if (use_shm) return std::make_unique<lm::worker::ShmCpuSource>();
+            return std::make_unique<lm::worker::ProcCpuSource>();
+          },
+          [&collector] { return collector.latest(); });
+      task_service =
+          std::make_unique<lm::worker::TaskService>(task_cfg, *events, rescue_sampler.get());
       grpc::ServerBuilder builder;
       int bound = 0;
       builder.AddListeningPort(task_cfg.listen, grpc::InsecureServerCredentials(), &bound);

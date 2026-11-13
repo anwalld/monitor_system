@@ -90,6 +90,7 @@ InflightLedger::EventResult InflightLedger::on_event(const std::string& task_id,
     case lm::TaskEvent::RECEIVED:
       if (t.state == State::kRunning) return EventResult::kIgnored;
       ack_.erase(t.it);
+      nodes_[t.node_id].acks.emplace_back(now_ms, false);
       t.state = State::kRunning;
       t.deadline = now_ms + p_.exec_timeout_ms;
       t.it = exec_.insert(exec_.end(), task_id);
@@ -113,6 +114,7 @@ void InflightLedger::tick(int64_t now_ms, std::vector<Expired>* out) {
     const bool sent = t.state == State::kSent;
     if (sent) {
       ++n.unconfirmed;
+      n.acks.emplace_back(now_ms, true);
     } else {
       ++n.voided;
     }
@@ -158,6 +160,36 @@ Factors InflightLedger::factors(const std::string& node_id) const {
   f.inflight = 1.0 / (1.0 + std::max(0.0, r - 1.0));
   f.timeout = std::exp(-p_.lambda * n.timeout_count);
   return f;
+}
+
+void InflightLedger::trim_acks(int64_t now_ms, int64_t window_ms) {
+  for (auto& [id, n] : nodes_) {
+    while (!n.acks.empty() && n.acks.front().first <= now_ms - window_ms) n.acks.pop_front();
+  }
+}
+
+InflightLedger::AckWindow InflightLedger::ack_window(const std::string& node_id) const {
+  AckWindow w;
+  auto it = nodes_.find(node_id);
+  if (it == nodes_.end()) return w;
+  for (const auto& [ts, bad] : it->second.acks) {
+    ++w.samples;
+    if (bad) ++w.unconfirmed;
+  }
+  return w;
+}
+
+void InflightLedger::reset_node(const std::string& node_id) {
+  auto it = nodes_.find(node_id);
+  if (it == nodes_.end()) return;
+  it->second.base_tasks = 0;
+  it->second.base_bytes = 0;
+  it->second.timeout_count = 0;
+}
+
+void InflightLedger::scale_timeout(const std::string& node_id, double factor) {
+  auto it = nodes_.find(node_id);
+  if (it != nodes_.end()) it->second.timeout_count *= factor;
 }
 
 InflightSnapshot InflightLedger::snapshot(const std::string& node_id) const {

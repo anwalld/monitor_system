@@ -5,11 +5,13 @@
 
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <vector>
 
 #include "event_sender.h"
+#include "rescue_sampler.h"
 #include "lm/config.h"
 #include "task.grpc.pb.h"
 
@@ -24,6 +26,7 @@ struct TaskConfig {
   uint32_t default_timeout_s = 300;
   uint32_t max_timeout_s = 3600;
   std::size_t output_tail_bytes = 4096;
+  uint32_t rescue_max_s = 15;  // 一条急救流的最长时长
 
   // 解析 task 段；环境变量 LM_TASK_TOKEN 非空时覆盖 token。不合法抛 lm::ConfigError。
   static TaskConfig parse(const lm::Config& cfg, unsigned ncpu, const char* env_token);
@@ -31,12 +34,18 @@ struct TaskConfig {
 
 class TaskService final : public lm::WorkerTask::Service {
  public:
-  TaskService(TaskConfig cfg, EventSender& events);
+  // sampler 为空时 Rescue 返回 UNIMPLEMENTED。
+  TaskService(TaskConfig cfg, EventSender& events, RescueSampler* sampler = nullptr);
 
   grpc::Status Submit(grpc::ServerContext* ctx, const lm::TaskReq* req,
                       lm::TaskResult* resp) override;
   grpc::Status Probe(grpc::ServerContext* ctx, const lm::ProbeReq* req,
                      lm::ProbeResp* resp) override;
+  grpc::Status Rescue(grpc::ServerContext* ctx,
+                      grpc::ServerReaderWriter<lm::RescueResp, lm::RescueReq>* stream) override;
+
+  uint64_t rescues() const { return rescues_.load(); }
+  bool rescue_active() const { return rescue_active_.load(); }
 
   int running() const { return running_.load(); }
   uint64_t done() const { return done_.load(); }
@@ -49,6 +58,10 @@ class TaskService final : public lm::WorkerTask::Service {
   const TaskConfig cfg_;
   const std::unordered_set<std::string> allowed_;
   EventSender& events_;
+  RescueSampler* sampler_;
+  std::mutex rescue_mu_;  // 同一时刻只服务一条急救流
+  std::atomic<bool> rescue_active_{false};
+  std::atomic<uint64_t> rescues_{0};
   std::atomic<int> running_{0};
   std::atomic<uint64_t> done_{0};
   std::atomic<uint64_t> failed_{0};

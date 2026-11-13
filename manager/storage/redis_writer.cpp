@@ -18,6 +18,16 @@ std::string fmt_float(float v) {
 
 }  // namespace
 
+std::map<std::string, std::string> RedisWriter::state_fields(const AcceptedSample& a) {
+  return {
+      {"state", mode_name(a.mode)},
+      {"state_reason", a.mode_reason},
+      {"state_since_ms", std::to_string(a.mode_since_wall_ms)},
+      {"f_slow", fmt_float(static_cast<float>(a.f_slow))},
+      {"probe_fail_streak", std::to_string(a.probe_fail_streak)},
+  };
+}
+
 void RedisWriter::parse_uri(const std::string& uri, sw::redis::ConnectionOptions& co) {
   std::string rest = uri;
   const std::string scheme = "tcp://";
@@ -82,6 +92,12 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
   try {
     auto pipe = redis_->pipeline(false);
     for (const auto& a : batch) {
+      if (a.state_only) {
+        // 状态变化：只写状态字段，不写时间序列与流（失联节点也能看到状态变成 evicted）
+        const auto f = state_fields(a);
+        pipe.hset(key("node:" + a.node_id), f.begin(), f.end());
+        continue;
+      }
       const lm::Sample& s = a.sample;
       const std::string json = to_json(s);
       const std::string hkey = key("node:" + s.node_id());
@@ -109,6 +125,7 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
           {"f_timeout", fmt_float(static_cast<float>(a.inflight.f_timeout))},
           {"timeout_count", fmt_float(static_cast<float>(a.inflight.timeout_count))},
       };
+      for (auto& kv : state_fields(a)) fields.insert(std::move(kv));
       // 调度延迟（M3）：Worker 三个字段同时设置或同时不设置。未上报时删掉旧值，避免读到过时的 P99
       if (s.has_runq_p99_us()) {
         fields["runq_p50_us"] = fmt_float(s.runq_p50_us());

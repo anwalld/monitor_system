@@ -1,4 +1,4 @@
-# 部署与环境搭建（M0–M5）
+# 部署与环境搭建（M0–M6）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
@@ -83,6 +83,14 @@ docker compose logs manager | grep -E '剔除|恢复|未上报调度延迟'   # 
 
 在途任务账的参数在 `inflight` 段（确认超时 30 秒、执行超时 300 秒、λ 0.5、T 半衰期 10 分钟、基线时间常数 60 秒）。`node:{id}` 里的 `inflight_tasks`、`f_inflight`、`f_timeout`、`timeout_count`、`unconfirmed` 可以看到每台节点的在途状态；Manager 每 10 秒的汇总日志里有在途、作废、未确认、执行超时、迟到事件的累计数。
 
+节点状态机（M6）的参数在 `breaker` 段（慢启动 5 分钟、权重从 0.2 起；探测每秒一次、连续 3 次失败剔除；未确认比例窗口 5 分钟；急救 1 ms 一条、最长 10 秒、退避 5–60 分钟）。`node:{id}` 里的 `state`（slow_start / normal / evicted / rescue）、`state_reason`、`state_since_ms`、`f_slow`、`probe_fail_streak` 是节点状态；状态变化时会立即写一次，失联的节点也能看到 `evicted`。日志里每次状态变化、急救开始与结束（含批数、超时数、网络事件数、T 的变化）各有一条。
+
+```bash
+docker compose logs manager | grep -E '状态 |急救'
+```
+
+升级到 M6 后，所有节点会先进入 5 分钟慢启动。Worker 必须开启任务服务（见第 8 节）：Manager 每秒探测 Worker 的 50052 端口，探测不通的节点会被剔除。
+
 在开发机上用 `lm-bench` 调 `Allocate`（Manager 用 host 网络，直接连 Manager 机的 50051）：
 
 ```bash
@@ -91,7 +99,17 @@ docker compose logs manager | grep -E '剔除|恢复|未上报调度延迟'   # 
 
 验收：在 Worker 上 `stress -c <核数> -t 25`，约 3 秒后 `evicted` 变成 1，`Allocate` 返回 `RESOURCE_EXHAUSTED`（只有一台 Worker 时）；stress 结束约 5 秒后恢复。
 
-回滚：`docker tag lm-manager:m3 lm-manager && docker compose up -d --no-build manager`（升级前先 `docker tag lm-manager lm-manager:m3` 留一份旧镜像）。
+回滚：`docker tag lm-manager:m5 lm-manager && docker compose up -d --no-build manager`（升级前先 `docker tag lm-manager lm-manager:<旧版本>` 留一份旧镜像；虚拟机上现有 `lm-manager:m3`、`m5a`、`m5`）。
+
+M6 故障注入验收（在 Worker 上执行；改 iptables 前先设好自动撤销）：
+
+```bash
+sudo systemctl stop lm-worker      # 节点宕机：3 秒内 state=evicted，不急救
+sudo systemctl start lm-worker     # 节点恢复：约 5 秒后 slow_start，5 分钟后 normal
+sudo systemd-run --on-active=5min /usr/sbin/iptables -D INPUT -p tcp --dport 50052 -j DROP
+sudo iptables -I INPUT -p tcp --dport 50052 -j DROP   # 灰色故障：约 3 秒后 evicted（probe）
+sudo iptables -D INPUT -p tcp --dport 50052 -j DROP   # 删除后回到 slow_start
+```
 
 ### 停止与清理
 
@@ -288,5 +306,6 @@ Worker 的任务服务默认关闭。开启后在 50052 端口接受客户端直
   ./build/experiments/lm-bench submit -m <manager_ip>:50051 -r 10 -d 120 --token <token> --csv run.csv
   ```
 
+- **探测与急救**：Manager 每秒调一次 `Probe`，急救时打开 `Rescue` 流（每 1 ms 一条，最长 10 秒，Worker 端另有 `task.rescue_max_s: 15` 上限）。两者都不校验 token。急救期间 Worker 把 cpustat 刷新周期改成 1 ms，结束后恢复，日志里有 `cpustat 刷新周期 ... -> 1000us` 和 `恢复为 ...` 两条。
 - **只有一台 Worker 虚拟机时**：可以在开发机的 Docker 里临时起第二个 Worker 做转移验收（`cpu_source: proc`、`runq: off`、`nic_probe: off`，发布 50052 端口），它的满分只有 0.65。这只用于测试，正式环境不容器化 Worker。
 - **回滚**：`task.enabled: false` 后 `systemctl restart lm-worker`。

@@ -36,6 +36,15 @@ grpc::Status CollectorService::Report(grpc::ServerContext* ctx, const lm::Sample
                        acc.score.total);
         }
       }
+      if (acc.change && acc.change->from != acc.change->to) {
+        const auto& c = *acc.change;
+        if (c.to == NodeMode::kEvicted) {
+          spdlog::warn("节点 {} 状态 {} → {}（{}）", c.node_id, mode_name(c.from), mode_name(c.to),
+                       c.reason);
+        } else {
+          spdlog::info("节点 {} 状态 {} → {}", c.node_id, mode_name(c.from), mode_name(c.to));
+        }
+      }
       queue_.push(std::move(acc));  // 锁外入队
       break;
     case NodeTable::Result::kStale:

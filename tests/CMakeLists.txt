@@ -49,7 +49,7 @@ target_compile_definitions(test_worker PRIVATE LM_FIXTURE_DIR="${CMAKE_CURRENT_S
 
 if(LM_BUILD_MANAGER)
   lm_add_test(test_manager test_node_table.cpp test_storage_queue.cpp test_redis_writer.cpp
-    test_scoring.cpp test_inflight.cpp)
+    test_scoring.cpp test_inflight.cpp test_breaker.cpp)
   target_link_libraries(test_manager PRIVATE lm_manager_ingest lm_manager_storage lm_manager_api)
   target_compile_definitions(test_manager PRIVATE LM_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config")
 endif()
@@ -61,7 +61,8 @@ if(NOT LM_ENABLE_TSAN)
   target_link_libraries(test_worker_rpc PRIVATE lm_worker_reporter lm_worker_task)
   target_compile_definitions(test_worker_rpc PRIVATE LM_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config")
   if(LM_BUILD_MANAGER)
-    lm_add_test(test_manager_rpc test_collector_service.cpp test_scheduler_service.cpp)
-    target_link_libraries(test_manager_rpc PRIVATE lm_manager_ingest lm_manager_api)
+    lm_add_test(test_manager_rpc test_collector_service.cpp test_scheduler_service.cpp
+      test_breaker_rpc.cpp)
+    target_link_libraries(test_manager_rpc PRIVATE lm_manager_ingest lm_manager_api lm_worker_task)
   endif()
 endif()

@@ -245,10 +245,14 @@ TEST(NodeTableInflight, TimeoutsReduceSelectionProbability) {
 }
 
 TEST(NodeTableInflight, PileUpReducesWeightAndSnapshotCarried) {
-  NodeTable t({});
+  NodeTable::Options o;
+  o.breaker.slow_start_ms = 1;  // 让节点立即离开慢启动（慢启动中 f_inflight 固定为 1）
+  NodeTable t(o);
   t.apply(healthy("w1", 1), "10.0.0.1", 0, 0, nullptr);
-  for (int i = 0; i < 6; ++i) t.allocate(0, 0.5, "t" + std::to_string(i), 0);
-  EXPECT_NEAR(t.select(0, 0.5).pick->weight, 1.0 / 3, 1e-9);
+  t.tick_states(1, 1, nullptr, nullptr);
+  ASSERT_EQ(*t.mode("w1"), NodeMode::kNormal);
+  for (int i = 0; i < 6; ++i) t.allocate(1, 0.5, "t" + std::to_string(i), 0);
+  EXPECT_NEAR(t.select(1, 0.5).pick->weight, 1.0 / 3, 1e-9);
   AcceptedSample a;
   t.apply(healthy("w1", 2), "10.0.0.1", 10, 0, &a);
   EXPECT_EQ(a.inflight.inflight_tasks, 6);

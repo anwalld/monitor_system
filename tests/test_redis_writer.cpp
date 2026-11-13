@@ -173,6 +173,40 @@ TEST_F(RedisWriterTest, ScoreAndEvictionFields) {
   EXPECT_EQ(w.write_errors(), 0U);
 }
 
+TEST_F(RedisWriterTest, StateFieldsAndStateOnlyWrite) {
+  StorageQueue q(16);
+  RedisWriter w(q, opt_);
+  const int64_t now = 1'800'000'000'000;
+  auto a = acc("w1", 1, now);
+  a.mode = NodeMode::kSlowStart;
+  a.mode_since_wall_ms = now - 10;
+  a.f_slow = 0.2;
+  w.write_batch({a});
+  std::unordered_map<std::string, std::string> h;
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["state"], "slow_start");
+  EXPECT_EQ(h["state_reason"], "");
+  EXPECT_EQ(h["state_since_ms"], std::to_string(now - 10));
+  EXPECT_EQ(h["f_slow"], "0.2000");
+  EXPECT_EQ(h["probe_fail_streak"], "0");
+
+  AcceptedSample st;
+  st.state_only = true;
+  st.node_id = "w1";
+  st.mode = NodeMode::kEvicted;
+  st.mode_reason = "lost";
+  st.mode_since_wall_ms = now + 3000;
+  st.f_slow = 1;
+  w.write_batch({st});
+  h.clear();
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["state"], "evicted");
+  EXPECT_EQ(h["state_reason"], "lost");
+  EXPECT_EQ(h["seq"], "1");  // 其他字段不动
+  EXPECT_EQ(redis_->zcount(k("node:w1:ts"), sw::redis::UnboundedInterval<double>{}), 1);
+  EXPECT_EQ(w.write_errors(), 0U);
+}
+
 TEST_F(RedisWriterTest, TrimRemovesOlderThanRetention) {
   StorageQueue q(16);
   opt_.ts_retention_ms = 3600 * 1000;

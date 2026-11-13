@@ -40,9 +40,10 @@ target_include_directories(lm_worker_task_runner PUBLIC ${CMAKE_CURRENT_SOURCE_D
 
 add_library(lm_worker_task STATIC
   task/event_sender.cpp
+  task/rescue_sampler.cpp
   task/task_service.cpp)
 target_include_directories(lm_worker_task PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/task)
-target_link_libraries(lm_worker_task PUBLIC lm_worker_task_runner lm_common lm_proto)
+target_link_libraries(lm_worker_task PUBLIC lm_worker_task_runner lm_worker_collector lm_common lm_proto)
 
 add_executable(worker main.cpp)
 target_link_libraries(worker PRIVATE lm_worker_collector lm_worker_reporter lm_worker_netprobe lm_worker_task)

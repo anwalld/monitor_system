@@ -54,6 +54,9 @@ class RedisWriter {
 
   uint64_t write_errors() const { return errors_.load(); }
 
+  // 节点状态字段（state、state_reason、state_since_ms、f_slow、probe_fail_streak）。
+  static std::map<std::string, std::string> state_fields(const AcceptedSample& a);
+
   // 样本序列化为压缩 JSON（proto 字段名）。
   static std::string to_json(const lm::Sample& s);
 

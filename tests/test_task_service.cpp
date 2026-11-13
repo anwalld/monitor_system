@@ -13,6 +13,7 @@
 
 #include "event_sender.h"
 #include "task_service.h"
+#include "collector/cpu_source.h"
 
 using namespace lm::worker;
 
@@ -283,6 +284,127 @@ TEST(TaskService, Probe) {
   lm::ProbeResp resp;
   ASSERT_TRUE(h.stub->Probe(&ctx, req, &resp).ok());
   EXPECT_EQ(resp.seq(), 42U);
+}
+
+}  // namespace
+
+// ---------- Rescue（M6） ----------
+
+namespace {
+
+class FakeCpu : public CpuSource {
+ public:
+  bool read(CpuSnapshot& out) override {
+    tick_ += 1000;
+    out.cores = {{0, tick_ / 2, tick_}};  // 忙碌度 0.5
+    return true;
+  }
+
+ private:
+  uint64_t tick_ = 0;
+};
+
+struct RescueHarness {
+  FakeCollector collector;
+  std::unique_ptr<grpc::Server> mgr;
+  std::unique_ptr<EventSender> events;
+  std::unique_ptr<RescueSampler> sampler;
+  std::unique_ptr<TaskService> svc;
+  std::unique_ptr<grpc::Server> worker;
+  std::shared_ptr<grpc::Channel> ch;
+  explicit RescueHarness(uint32_t max_s = 15) {
+    events = std::make_unique<EventSender>(
+        [](const lm::TaskEvent&, std::chrono::milliseconds) { return grpc::Status::OK; },
+        EventSender::Options{});
+    sampler = std::make_unique<RescueSampler>(
+        [] { return std::make_unique<FakeCpu>(); },
+        [] {
+          lm::Sample s;
+          s.set_node_id("w1");
+          s.set_mem_avail_ratio(0.7F);
+          return s;
+        });
+    TaskConfig c = enabled_cfg();
+    c.rescue_max_s = max_s;
+    svc = std::make_unique<TaskService>(c, *events, sampler.get());
+    int port = 0;
+    grpc::ServerBuilder b;
+    b.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
+    b.RegisterService(svc.get());
+    worker = b.BuildAndStart();
+    ch = grpc::CreateChannel("127.0.0.1:" + std::to_string(port), grpc::InsecureChannelCredentials());
+  }
+};
+
+TEST(WorkerRescue, EchoesSeqWithFreshSample) {
+  RescueHarness h;
+  auto stub = lm::WorkerTask::NewStub(h.ch);
+  grpc::ClientContext ctx;
+  auto stream = stub->Rescue(&ctx);
+  int got = 0;
+  for (uint64_t i = 1; i <= 1000; ++i) {
+    lm::RescueReq req;
+    req.set_seq(i);
+    req.set_send_ts_us(static_cast<int64_t>(i) * 7);
+    ASSERT_TRUE(stream->Write(req));
+    lm::RescueResp resp;
+    ASSERT_TRUE(stream->Read(&resp));
+    EXPECT_EQ(resp.seq(), i);
+    EXPECT_EQ(resp.send_ts_us(), static_cast<int64_t>(i) * 7);
+    EXPECT_EQ(resp.sample().node_id(), "w1");
+    EXPECT_FLOAT_EQ(resp.sample().mem_avail_ratio(), 0.7F);
+    EXPECT_NEAR(resp.sample().cpu_busy(), 0.5, 1e-6);
+    EXPECT_GT(resp.sample().ts_ms(), 0);
+    ++got;
+  }
+  stream->WritesDone();
+  EXPECT_TRUE(stream->Finish().ok());
+  EXPECT_EQ(got, 1000);
+  EXPECT_FALSE(h.sampler->active());
+}
+
+TEST(WorkerRescue, SecondStreamAborted) {
+  RescueHarness h;
+  auto stub = lm::WorkerTask::NewStub(h.ch);
+  grpc::ClientContext c1;
+  auto s1 = stub->Rescue(&c1);
+  lm::RescueReq req;
+  req.set_seq(1);
+  ASSERT_TRUE(s1->Write(req));
+  lm::RescueResp resp;
+  ASSERT_TRUE(s1->Read(&resp));
+  ASSERT_TRUE(wait_for([&] { return h.svc->rescue_active(); }));
+  grpc::ClientContext c2;
+  auto s2 = stub->Rescue(&c2);
+  s2->WritesDone();
+  EXPECT_EQ(s2->Finish().error_code(), grpc::StatusCode::ABORTED);
+  req.set_seq(2);
+  ASSERT_TRUE(s1->Write(req));
+  ASSERT_TRUE(s1->Read(&resp));
+  EXPECT_EQ(resp.seq(), 2U);
+  s1->WritesDone();
+  EXPECT_TRUE(s1->Finish().ok());
+}
+
+TEST(WorkerRescue, MaxDurationEnforced) {
+  RescueHarness h(1);
+  auto stub = lm::WorkerTask::NewStub(h.ch);
+  grpc::ClientContext ctx;
+  auto stream = stub->Rescue(&ctx);
+  const auto t0 = std::chrono::steady_clock::now();
+  lm::RescueResp resp;
+  for (uint64_t i = 1;; ++i) {
+    lm::RescueReq req;
+    req.set_seq(i);
+    if (!stream->Write(req) || !stream->Read(&resp)) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    ASSERT_LT(std::chrono::steady_clock::now() - t0, std::chrono::seconds(3));
+  }
+  EXPECT_EQ(stream->Finish().error_code(), grpc::StatusCode::DEADLINE_EXCEEDED);
+  const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::steady_clock::now() - t0).count();
+  EXPECT_GE(ms, 950);
+  EXPECT_FALSE(h.sampler->active());
 }
 
 }  // namespace

@@ -5,6 +5,8 @@
 // 本类不加锁，由 NodeTable 的锁保护；时钟由调用方传入，便于用模拟时钟测试。
 
 #include <cstdint>
+#include <deque>
+#include <utility>
 #include <list>
 #include <optional>
 #include <string>
@@ -64,6 +66,12 @@ class InflightLedger {
     double timeout_count = 0;     // T，按半衰期衰减
     double base_tasks = 0;
     double base_bytes = 0;
+    std::deque<std::pair<int64_t, bool>> acks;  // 确认结果窗口：(时刻, 是否未确认)
+  };
+
+  struct AckWindow {
+    int samples = 0;
+    int unconfirmed = 0;
   };
 
   struct Totals {
@@ -87,6 +95,13 @@ class InflightLedger {
   void tick_second(double dt_s = 1.0);
 
   Factors factors(const std::string& node_id) const;  // 只填 inflight、timeout
+  // 修剪所有节点的确认窗口，只留 (now − window_ms, now] 内的样本。
+  void trim_acks(int64_t now_ms, int64_t window_ms);
+  AckWindow ack_window(const std::string& node_id) const;
+  // 节点离开候选又回来时按新节点对待：清空在途基线与超时计数 T（确认窗口保留）。
+  void reset_node(const std::string& node_id);
+  // 急救成功批：T 乘以 factor。
+  void scale_timeout(const std::string& node_id, double factor);
   InflightSnapshot snapshot(const std::string& node_id) const;
   const NodeCounters* node(const std::string& node_id) const;
   bool has_task(const std::string& task_id) const { return tasks_.count(task_id) != 0; }

@@ -42,6 +42,9 @@ target_include_directories(lm_manager_scoring PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 target_link_libraries(lm_manager_scoring PUBLIC lm_common lm_proto)
 
 add_library(lm_manager_ingest STATIC
+  breaker/breaker_params.cpp
+  breaker/rescue_logic.cpp
+  breaker/node_state.cpp
   inflight/inflight_ledger.cpp
   ingest/node_table.cpp
   ingest/collector_service.cpp)
@@ -55,6 +58,8 @@ target_link_libraries(lm_manager_storage PUBLIC lm_manager_ingest ${LM_REDISPP_T
 
 add_library(lm_manager_api STATIC
   api/scheduler_service.cpp
+  breaker/prober.cpp
+  breaker/rescue_session.cpp
   scheduler_loop.cpp)
 target_include_directories(lm_manager_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_manager_api PUBLIC lm_manager_ingest)
