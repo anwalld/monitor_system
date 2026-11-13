@@ -1,6 +1,5 @@
 # Build directory
 build/
-cmake/
 
 # Kernel module build artifacts
 *.o
@@ -48,3 +47,8 @@ manager/manager
 
 # eBPF test binary
 worker/src/ebpf/test_net_ebpf
+
+# Deploy secrets and per-machine config
+deploy/.env
+deploy/policy-route.conf
+build-*/

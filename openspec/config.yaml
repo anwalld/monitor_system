@@ -5,57 +5,76 @@ context: |
   All artifacts must be written in zh-CN.
   Keep OpenSpec structural headings and SHALL/MUST keywords in English.
 
-  ## 项目概述
-  Linux 分布式服务器性能监控系统，Push 模式：
-  - worker（部署在被监控机器）：周期性（默认 10 秒）采集 CPU/负载/软中断/内存/磁盘/网络指标，
-    通过 gRPC 推送 MonitorInfo 到 manager。
-  - manager（管理端）：接收数据、计算健康评分、写入 MySQL、对外提供 QueryService 查询接口；
-    另有 query_client 命令行工具（复用 RpcClient）。
-  - 服务器标识统一为 `hostname_ip`；manager 默认监听 0.0.0.0:50051；离线阈值 60 秒。
+  ## 项目定位
+  Linux 服务器性能监控与调度系统（二次开发，按新开发文档从头重构，旧 worker/manager/proto 代码将被替换）。
+  开发文档（权威来源）：https://claude.ai/artifact/7gFfa9w6pxbuwo7WM1EYhN
+  四部分：Worker 采集节点指标并执行任务；Manager 评分并把每个任务派给此刻最合适的节点；
+  AI 服务做异常诊断、运维问答、负载预测和日报；Web 看板实时展示。
 
-  ## 技术栈
-  - C++17，CMake ≥ 3.10，GCC 9+/Clang 10+，仅面向 Linux（内核 5.4+）。
-  - gRPC + Protocol Buffers（proto/ 目录，生成 monitor_proto 库）。
-  - 数据采集：内核模块（worker/src/kmod，字符设备 /dev/cpu_stat_monitor、/dev/cpu_softirq_monitor）、
-    eBPF + libbpf skeleton（worker/src/ebpf，ENABLE_EBPF 选项，缺依赖时回退到 procfs 的 net_monitor）、procfs。
-  - 存储：MySQL 8.0+（表结构见 manager/sql/init_server_performance.sql；BUILD_MANAGER 选项控制 manager 编译）。
+  ## 核心目标
+  - 把任务派给当前最闲的节点，节点上他人直接登录跑的负载也要看得到。
+  - 故障节点 3 秒内隔离，恢复后自动慢启动重新接任务。
+  - CPU 读取耗时比 /proc/stat 低 85% 以上，撑得住 1ms 级急救探测。
+  - AI 只给建议：AI 服务整个挂掉，调度照常运行。Redis、MySQL、AI、看板都在旁路，挂掉不影响任务分配。
 
-  ## 代码结构与约定
-  - worker/include|src/monitor：每类指标一个 *Monitor 类，继承 monitor::MonitorInter，
-    实现 UpdateOnce(monitor::proto::MonitorInfo*) 与 Stop()；由 MetricCollector 汇总。
-  - worker/src/rpc：MonitorPusher 负责推送；manager/src/rpc：GrpcServer、QueryService、RpcClient。
-  - manager/src：HostManager（接收/评分/入库）、QueryManager（查询逻辑）。
-  - 命名空间 monitor / monitor::proto；头文件使用 #pragma once。
-  - 代码风格：Google C++ Style（.clang-format），2 空格缩进；注释可用中文。
-  - 新增 proto 字段需保持向后兼容（不复用/修改已有字段号）。
-  - 新增源文件必须同步加入对应 CMakeLists.txt。
+  ## 非目标
+  按业务组切换出口网卡、Manager 高可用（单实例）、认证与多租户（只用静态 token）、容器化 Worker。
+
+  ## 运行环境
+  - Manager 侧 1 台 4C8G 虚拟机：Docker Compose 跑 manager、redis、mysql、ai、nginx。
+  - Worker 十几台（上限 20，初期 3 台），2–4 核、2 块网卡、Ubuntu 24.04（内核 6.8，开 BTF 与 NO_HZ），
+    systemd 部署，能力 CAP_NET_RAW、CAP_BPF、CAP_PERFMON。
+  - 规模小：单 Manager，每次选择直接遍历全部候选节点，不做分片或索引。
+
+  ## 目标目录结构（单仓库）
+  proto/（monitor.proto、task.proto、advisor.proto）；kmod/cpustat/；bpf/；common/（环形缓冲、seqlock 读端、配置、日志）；
+  worker/{collector,netprobe,reporter,task}/；manager/{ingest,scoring,inflight,breaker,storage,api}/；
+  ai/（Python）；web/（Vue 3）；deploy/；experiments/。
+
+  ## 技术选型
+  - 内核模块：C，Linux 6.8，字符设备 + vmalloc_user 共享页 + hrtimer + seqlock，MODULE_LICENSE("GPL")。
+  - eBPF：libbpf + CO-RE，bpftool 生成 skeleton，tp_btf 跟踪点。
+  - Worker/Manager：C++17、CMake、gRPC + Protobuf（package lm）、spdlog、yaml-cpp、GoogleTest；
+    Manager 另用 redis-plus-plus、MySQL Connector/C++、Drogon（REST + WebSocket）。
+  - AI：Python 3.11、FastAPI、redis-py、aiomysql、grpcio、pydantic、openai SDK（OpenAI 兼容接口）、mcp SDK、APScheduler、numpy。
+  - 看板：Vue 3 + Vite + ECharts。
+  - 端口：Manager gRPC 50051、HTTP 8080；Worker gRPC 50052；AI 8000；Nginx 80（/api/ai/→AI，/api/ 与 /ws→Manager，/→看板）。
+  - 配置：每组件一个 YAML；LLM API Key、数据库密码放 .env，不进 Git。
+
+  ## 关键工程约束
+  - Manager 调度状态（节点表、在途账）由一把互斥锁保护，持锁期间不做任何 IO；Redis/MySQL 写入交给存储线程，写失败只记日志。
+  - Worker 上报 1 秒一次、RPC 超时 500ms、失败不重传；采集与上报通过 CAS 环形缓冲解耦。
+  - proto 字段号一经发布不得复用或修改；optional 字段用 has_xxx() 区分“未上报”和 0。
+  - 代码风格 Google C++ Style（.clang-format），命名空间 lm；注释可用中文。
+  - 新增源文件同步加入对应 CMakeLists.txt；单元测试用 GoogleTest，并发代码开 ThreadSanitizer。
 
   ## 开发环境注意事项
-  - 开发机为 macOS（CLion），但内核模块、eBPF、/proc 采集只能在 Linux 上编译和运行验证；
-    macOS 上无法完成完整构建时需在任务/验证中明确说明，并给出 Linux 上的验证步骤。
-  - 项目目前没有单元测试框架；如需新增测试，优先使用 GoogleTest 并通过 CMake 选项接入。
+  - 开发机是 macOS（CLion），内核模块、eBPF、/proc、策略路由、ICMP 原始 socket 只能在 Linux Worker 虚拟机上编译和验证；
+    任务与验收中必须标明哪些步骤需在 Linux 上执行。
+  - 里程碑 M0–M10 按依赖推进，每个里程碑一个 OpenSpec change，结束时都能跑起来。
 
 rules:
   proposal:
-    - 明确写出影响的模块（worker / manager / proto / kmod / ebpf / sql）
-    - 明确写出不在本次范围内的内容
-    - 如涉及 proto 或数据库表结构变更，说明兼容性与迁移方式
+    - 标明对应的里程碑（M0–M10）和影响的模块（proto / kmod / bpf / common / worker / manager / ai / web / deploy / experiments）
+    - 明确写出不在本次范围内的内容，尤其是留给后续里程碑的部分
+    - 涉及 proto、Redis key 或 MySQL 表结构时，说明兼容性
   design:
-    - 涉及跨 worker 与 manager 的改动时，画出或描述数据流
-    - 说明对采集开销、推送频率、数据库写入量的影响
+    - 跨进程改动描述数据流和线程归属
+    - 说明对采集开销、上报频率、Redis/MySQL 写入量、调度锁持有时间的影响
   tasks:
     - 每个任务粒度控制在 2 小时以内
-    - 任务按 proto → worker → manager → sql → 文档 的依赖顺序排列
-    - 每组任务末尾包含构建/验证步骤（标注需在 Linux 上执行的部分）
+    - 按依赖顺序排列（proto → common → worker → manager → 存储 → ai → web → 部署 → 实验）
+    - 每组任务末尾包含构建与验证步骤，标注需在 Linux 上执行的部分
+    - 验收标准与开发文档里程碑表一致
   specs:
-    - 每个 Requirement 至少包含一个 Scenario，使用 WHEN/THEN 描述
-    - gRPC 接口需求需写明请求参数、返回字段与错误情况
+    - 每个 Requirement 至少一个 Scenario，使用 WHEN/THEN
+    - gRPC 接口写明请求参数、返回字段与错误码；阈值和默认参数写出具体数值
 
 operations:
   apply:
     guidance:
-      - 遵循现有代码风格与目录结构，不做无关重构
-      - 修改后尽量在本地执行 cmake 构建；无法在 macOS 验证的部分如实说明
+      - 遵循开发文档与本 change 的 design，不做范围外的重构
+      - 能在 macOS 上构建的部分本地构建验证；需 Linux 的部分如实说明并给出验证命令
   archive:
     guidance:
-      - 归档前确认 README 中的接口表、指标表、配置参数与实现一致
+      - 归档前确认 README、配置样例与实现一致

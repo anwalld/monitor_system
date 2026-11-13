@@ -1,0 +1,13 @@
+[Unit]
+Description=linux-monitor Worker multi-NIC policy routing
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/lm/deploy/policy-route.sh --conf /opt/lm/deploy/policy-route.conf
+ExecStop=/opt/lm/deploy/policy-route.sh --down
+
+[Install]
+WantedBy=multi-user.target
