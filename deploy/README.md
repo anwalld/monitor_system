@@ -1,4 +1,4 @@
-# 部署与环境搭建（M0、M2）
+# 部署与环境搭建（M0、M2、M3）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
@@ -177,3 +177,23 @@ ls -l /dev/cpustat                                     # 应为 cr--r----- root 
   ```
 
 - **回滚**：`sudo modprobe -r cpustat && sudo rm /etc/modules-load.d/cpustat.conf`。Worker 会自动回退到 `/proc/stat`。
+
+### 6. eBPF 调度延迟（M3）
+
+Worker 启动时加载 `bpf/runqlat.bpf.c` 编出的程序（已嵌进 Worker 二进制），挂到 `sched_wakeup`、`sched_wakeup_new`、`sched_switch` 三个跟踪点上。
+
+- **条件**：内核有 BTF（自检的 btf 项）；进程有 `CAP_BPF` 和 `CAP_PERFMON`（`lm-worker.service` 已授予）；装有 `libbpf1`（`install-worker.sh` 会装）。
+- **配置**：`/etc/lm/worker.yaml` 里的 `runq`。
+  - `auto`（默认）：加载失败只警告，样本不带调度延迟字段。
+  - `on`：加载失败就退出。
+  - `off`：不采集。
+- **确认生效**：`journalctl -u lm-worker | grep 调度延迟` 应显示“已启用”。`redis-cli HGET node:<id> runq_p99_us` 每秒更新。
+- **验收**：
+
+  ```bash
+  sudo ./build-linux/worker/runq_compare --seconds 30 > ours.json &   # 与下一条同时运行
+  sudo runqlat-bpfcc 30 1 > runqlat.txt                              # bcc 自带的 runqlat
+  wait; python3 bpf/test/compare_runqlat.py runqlat.txt ours.json    # 总变差距离 ≤ 0.1，P50、P99 相差 ≤ 2 倍
+  ```
+
+- **回滚**：配置里写 `runq: off` 后 `systemctl restart lm-worker`。Manager 在下一条样本时删掉 Redis 中的调度延迟字段。

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <thread>
+#include <vector>
 
 #include "collector/collector.h"
 
@@ -49,7 +50,7 @@ TEST(Collector, FirstCollectIsBaselineThenSamples) {
   EXPECT_FLOAT_EQ(s.cpu_busy(), 0.5F);
   EXPECT_FLOAT_EQ(s.mem_avail_ratio(), 0.6F);
   EXPECT_FLOAT_EQ(s.disk_util(), 0.2F);
-  EXPECT_FALSE(s.has_runq_p99_us());  // M1 不上报调度延迟
+  EXPECT_FALSE(s.has_runq_p99_us());  // 没有 runq 读取函数时不设置调度延迟
   EXPECT_EQ(s.nics_size(), 0);
 }
 
@@ -71,6 +72,76 @@ TEST(Collector, SameCpuDataStillPublishesWithLastBusy) {
   EXPECT_FLOAT_EQ(s.cpu_busy(), 0.5F);
   EXPECT_EQ(s.core_busy_size(), 2);
   EXPECT_EQ(c.samples_published(), 2U);
+}
+
+TEST(Collector, RunqStatesMapToOptionalFields) {
+  SampleRing ring;
+  std::vector<RunqResult> script;
+  RunqResult ok;
+  ok.status = RunqResult::kOk;
+  ok.stats.p50_us = 12.5F;
+  ok.stats.p99_us = 850.0F;
+  ok.stats.drop_rate = 0.0F;
+  RunqResult base;
+  base.status = RunqResult::kBaseline;
+  RunqResult fail;
+  fail.status = RunqResult::kFailed;
+  RunqResult ok2 = ok;
+  ok2.stats.p99_us = 2000.0F;
+  // 采集 1 只建 CPU 基线（不出样本）；之后依次：基线、成功、失败（沿用）、成功
+  script = {base, base, ok, fail, ok2};
+  std::size_t i = 0;
+  MetricReaders readers{[] { return 0.5; }, [](int64_t) { return 0.1; },
+                        [&] { return script[std::min(i++, script.size() - 1)]; }};
+  Collector c("w1", std::make_unique<FakeCpu>(1), std::move(readers), ring,
+              std::chrono::milliseconds(1000));
+  lm::Sample s;
+  EXPECT_FALSE(c.collect_once());
+
+  ASSERT_TRUE(c.collect_once());
+  ASSERT_TRUE(ring.take_latest(s));
+  EXPECT_FALSE(s.has_runq_p99_us());  // runq 还在基线
+
+  ASSERT_TRUE(c.collect_once());
+  ASSERT_TRUE(ring.take_latest(s));
+  ASSERT_TRUE(s.has_runq_p99_us());
+  EXPECT_FLOAT_EQ(s.runq_p50_us(), 12.5F);
+  EXPECT_FLOAT_EQ(s.runq_p99_us(), 850.0F);
+  EXPECT_TRUE(s.has_runq_drop_rate());  // 值为 0 也被设置
+  EXPECT_EQ(s.runq_drop_rate(), 0.0F);
+
+  ASSERT_TRUE(c.collect_once());
+  ASSERT_TRUE(ring.take_latest(s));
+  EXPECT_FLOAT_EQ(s.runq_p99_us(), 850.0F);  // 失败沿用
+
+  ASSERT_TRUE(c.collect_once());
+  ASSERT_TRUE(ring.take_latest(s));
+  EXPECT_FLOAT_EQ(s.runq_p99_us(), 2000.0F);
+}
+
+TEST(Collector, RunqFailureWithoutHistoryAndDisabled) {
+  SampleRing ring;
+  RunqResult fail;
+  fail.status = RunqResult::kFailed;
+  Collector c("w1", std::make_unique<FakeCpu>(1),
+              {[] { return 0.5; }, [](int64_t) { return 0.1; }, [=] { return fail; }}, ring,
+              std::chrono::milliseconds(1000));
+  c.collect_once();
+  ASSERT_TRUE(c.collect_once());
+  lm::Sample s;
+  ASSERT_TRUE(ring.take_latest(s));
+  EXPECT_FALSE(s.has_runq_p99_us());  // 没有上次的值可沿用
+
+  RunqResult off;
+  off.status = RunqResult::kDisabled;
+  SampleRing ring2;
+  Collector d("w1", std::make_unique<FakeCpu>(1),
+              {[] { return 0.5; }, [](int64_t) { return 0.1; }, [=] { return off; }}, ring2,
+              std::chrono::milliseconds(1000));
+  d.collect_once();
+  ASSERT_TRUE(d.collect_once());
+  ASSERT_TRUE(ring2.take_latest(s));
+  EXPECT_FALSE(s.has_runq_p50_us());
 }
 
 TEST(Collector, FailedReadKeepsLastValue) {

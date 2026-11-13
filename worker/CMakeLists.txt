@@ -3,9 +3,16 @@ add_library(lm_worker_collector STATIC
   collector/proc_readers.cpp
   collector/collector.cpp
   collector/shm_cpu_source.cpp
-  collector/interval_guard.cpp)
+  collector/interval_guard.cpp
+  collector/runq_histogram.cpp
+  collector/runq_probe.cpp)
 target_include_directories(lm_worker_collector PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_worker_collector PUBLIC lm_common lm_proto)
+target_include_directories(lm_worker_collector PUBLIC ${PROJECT_SOURCE_DIR}/bpf)  # runqlat.h
+if(LM_HAVE_BPF)
+  target_compile_definitions(lm_worker_collector PUBLIC LM_HAVE_BPF)
+  target_link_libraries(lm_worker_collector PUBLIC lm_bpf_runqlat)
+endif()
 
 add_library(lm_worker_reporter STATIC
   reporter/reporter.cpp)
@@ -18,3 +25,7 @@ target_link_libraries(worker PRIVATE lm_worker_collector lm_worker_reporter)
 # CPU 读取耗时基准（M2 验收）
 add_executable(cpu_read_bench bench/cpu_read_bench.cpp)
 target_link_libraries(cpu_read_bench PRIVATE lm_worker_collector)
+
+# 调度延迟对照工具（M3 验收）
+add_executable(runq_compare bench/runq_compare.cpp)
+target_link_libraries(runq_compare PRIVATE lm_worker_collector)

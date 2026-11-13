@@ -27,7 +27,7 @@ FORCE_CONFIG=0
 HOSTS=()
 
 BUILD_PKGS="build-essential"
-RUNTIME_PKGS="libgrpc++1.51t64 libgrpc29t64 libprotobuf32t64 libabsl20220623t64 libre2-10 libcares2 libspdlog1.12 libfmt9 libyaml-cpp0.8 libssl3t64 zlib1g"
+RUNTIME_PKGS="libgrpc++1.51t64 libgrpc29t64 libprotobuf32t64 libabsl20220623t64 libre2-10 libcares2 libspdlog1.12 libfmt9 libyaml-cpp0.8 libssl3t64 zlib1g libbpf1"
 
 die() { echo "错误：$*" >&2; exit 1; }
 
@@ -72,6 +72,7 @@ collect_interval_ms: 1000
 report_interval_ms: 1000
 report_deadline_ms: 500
 cpu_source: auto               # auto：有 /dev/cpustat 用共享页，否则回退 /proc/stat
+runq: auto                     # 调度延迟（eBPF）：auto 加载失败只警告；on 失败退出；off 不采集
 log_level: info
 EOF
 )"

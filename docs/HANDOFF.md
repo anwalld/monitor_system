@@ -1,6 +1,6 @@
 # 交接文档
 
-更新时间：2026-11-13 09:45（UTC+8），M2 完成之后
+更新时间：2026-11-13 14:20（UTC+8），M3 完成之后
 
 ## 一句话现状
 
@@ -14,7 +14,12 @@
   - 读取耗时：共享页 11.7 ns，/proc/stat 7.7 µs，降低 99.8%。
   - 加载卸载 1000 次无残留；1 毫秒周期跑 10 分钟 dmesg 无警告；重启后模块自动加载。
   - kmemleak 没做：Ubuntu 默认内核未开启。
-- **提交状态**：M0、M1 已提交并推送（a7fe517、b99badf）。M2 的改动还在工作区，没有 commit，提交前先问用户。
+- **M3**：16 项任务全部完成，虚拟机验收通过（`openspec/changes/m3-ebpf-runqlat/`）。
+  - 与 bcc runqlat 对比：负载下总变差距离 0.040、空闲时 0.036，P50、P99 比值都不超过 1.06。
+  - 拥挤验收：8 个线程挤在一个核上时，P99 从空闲的 87 µs 升到 22.5 ms。
+  - 开销：Worker 空闲 60 秒只用 0.16 秒 CPU；`sched pipe` 极端场景下约慢 5%。
+  - 归档顺序：先归档 M1，再归档 M3。
+- **提交状态**：M0、M1、M2 已提交并推送（a7fe517、b99badf、790061f）。M3 的改动还在工作区，没有 commit，提交前先问用户。
 
 ## 2026-11-13 这次做了什么
 
@@ -33,10 +38,10 @@
 
 ### 虚拟机当前状态（保留着，方便继续测）
 
-- **systemd**：`lm-worker` 在运行（M2 版本，读 cpustat 共享页），二进制在 `/opt/lm/bin/worker`，配置在 `/etc/lm/worker.yaml`，`manager_addr` 是 `127.0.0.1:50051`。
+- **systemd**：`lm-worker` 在运行（M3 版本：读 cpustat 共享页，eBPF 调度延迟已启用），二进制在 `/opt/lm/bin/worker`，配置在 `/etc/lm/worker.yaml`，`manager_addr` 是 `127.0.0.1:50051`。
 - **cpustat 模块**：源码在 `/opt/lm/kmod/cpustat`，模块装在 `/lib/modules/6.8.0-149-generic/extra/`，由 `/etc/modules-load.d/cpustat.conf` 开机加载，udev 规则 `/etc/udev/rules.d/99-cpustat.rules`。
-- **docker compose**：项目 `lm` 在 `~/lm/deploy`，跑着 redis、mysql、manager。密码是随机生成的，在虚拟机的 `~/lm/deploy/.env` 里。
-- **已装的软件**：stress、fio、docker.io、docker-compose-v2、Worker 运行时库、build-essential、linux-headers。
+- **docker compose**：项目 `lm` 在 `~/lm/deploy`（manager 镜像已更新为 M3 版本，会写 runq 字段），跑着 redis、mysql、manager。密码是随机生成的，在虚拟机的 `~/lm/deploy/.env` 里。
+- **已装的软件**：stress、fio、docker.io、docker-compose-v2、Worker 运行时库（含 libbpf1）、build-essential、linux-headers、bpfcc-tools（runqlat-bpfcc）、linux-tools（perf、bpftool）。
 - **策略路由**：已撤销，`ip rule` 恢复原样。`/opt/lm/deploy/policy-route.conf` 里写的是 `ens160` 和 `ens192 172.16.13.1`。
 
 ## 关键链接与环境
@@ -117,17 +122,24 @@ Ubuntu 虚拟机（`ssh ubuntu@172.16.255.133`）：
 ## 下一步（按顺序）
 
 1. **等用户决定**：
-   - 是否提交并推送 M2。不要自行 commit 或 push。
+   - 是否提交并推送 M3。不要自行 commit 或 push。
    - 是否把虚拟机第二块网卡从 host-only 改成 NAT 或桥接（改了才能完整验收 2.4），以及是否再加 2 台 Worker（4.2 和 7.1 要 3 台）。
 2. **用户加了虚拟机后**：用 `install-worker.sh -m <manager>:50051 -u ubuntu <ip...>` 部署，补测 M0 4.2 和 M1 7.1。每台都要先跑 `check-worker-host.sh`，再配策略路由。
-3. **M3 规划**：用 openspec-propose 生成 `m3-ebpf-runqlat`。内容按开发文档“eBPF 调度延迟”一节：libbpf + CO-RE、`tp_btf` 跟踪点、直方图与丢弃计数，验收是与 bcc `runqlat` 的分布接近。虚拟机已有 BTF 和 bpftool。
-4. **之后按里程碑表推进**：M4 多网卡、M5 调度……
+3. **M4 规划**：用 openspec-propose 生成 `m4-multi-nic`。内容按开发文档“多网卡链路质量”一节：
+   - 每块网卡 ICMP 探测：epoll + timerfd 线程，RTT、抖动、超时率。
+   - Netlink tcp_info 重传率。
+   - sysfs 收发流量。
+   - 填 `Sample.nics`。
+   - 验收：netem 注入后只有对应网卡的指标变差。
+   - 注意：虚拟机的 ens192 是 host-only，连不了外网，探测目标可以用网关 172.16.13.1。
+4. **之后按里程碑表推进**：M5 调度、M6 节点状态机……
 
 ## 注意事项
 
 - **定时任务**：无人值守运行时会卡在权限确认上。下次设定时任务前，先提醒用户在应用里给任务设置权限模式，或者先点一次“Run now”把要用的命令批准掉。
 - 用户习惯：中文、简短、异步。能自己决定的就决定，把决定写进 design.md 后汇报，不要因为小问题停下来等。
 - **虚拟机计时器**：arm64 计时器一跳约 41 ns，测纳秒级耗时要分批计时（见 m2 design 第 11 节）。
+- **worker 日志在 stderr**：M3 起所有组件的日志写 stderr，`--dry-run` 的 stdout 是纯 JSON。
 - **后台命令里的 `wait`**：脚本里有后台 stress 时，`wait` 会连它一起等，导致卡住。要用 `wait <pid>`。
 - **macOS 上的命令**：zsh 不会把 `$VAR` 按空格拆成多个参数，需要多个参数时用 bash 脚本文件。
 - **docker exec 吃标准输入**：在 heredoc 里调用 `docker exec` 会读走后面的脚本，要加 `</dev/null` 或改用脚本文件。

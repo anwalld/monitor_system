@@ -5,7 +5,8 @@
 namespace lm {
 
 void init_logging(const std::string& name, const std::string& level) {
-  auto logger = spdlog::stdout_color_mt(name);
+  // 日志写 stderr：标准输出留给 worker --dry-run 等输出数据的场景（systemd 下两者都进 journal）
+  auto logger = spdlog::stderr_color_mt(name);
   spdlog::set_default_logger(logger);
   spdlog::set_pattern("%Y-%m-%d %H:%M:%S.%e [%n] [%^%l%$] [%t] %v");
   auto lvl = spdlog::level::from_str(level);

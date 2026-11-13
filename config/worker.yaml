@@ -5,4 +5,5 @@ collect_interval_ms: 1000      # 采集周期
 report_interval_ms: 1000       # 上报周期
 report_deadline_ms: 500        # 每次上报的截止时间
 cpu_source: auto               # auto：有 /dev/cpustat 用共享页，否则回退 /proc/stat；shm：只用共享页；proc：只用 /proc/stat
+runq: auto                     # 调度延迟（eBPF）：auto 加载失败只警告；on 失败退出；off 不采集
 log_level: info                # trace/debug/info/warn/error

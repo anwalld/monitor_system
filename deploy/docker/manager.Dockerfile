@@ -13,9 +13,11 @@ COPY CMakeLists.txt ./
 COPY cmake cmake
 COPY proto proto
 COPY common common
+COPY kmod/cpustat/cpustat_uapi.h kmod/cpustat/
+COPY bpf bpf
 COPY worker worker
 COPY manager manager
-RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLM_BUILD_TESTS=OFF \
+RUN cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DLM_BUILD_TESTS=OFF -DLM_ENABLE_BPF=OFF \
     && cmake --build build --target manager
 
 FROM ubuntu:24.04

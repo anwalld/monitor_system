@@ -65,6 +65,30 @@ float Collector::read_with_fallback(const char* name, std::optional<double> v, f
   return last;
 }
 
+std::optional<RunqStats> Collector::read_runq() {
+  if (!readers_.runq) return std::nullopt;
+  const RunqResult r = readers_.runq();
+  switch (r.status) {
+    case RunqResult::kOk:
+      if (runq_fails_ >= kErrorAfterFails) spdlog::info("调度延迟读取恢复");
+      runq_fails_ = 0;
+      last_runq_ = r.stats;
+      return last_runq_;
+    case RunqResult::kFailed:
+      ++runq_fails_;
+      if (runq_fails_ == kErrorAfterFails) {
+        spdlog::error("调度延迟连续 {} 次读取失败，沿用上次的值", runq_fails_);
+      } else if (runq_fails_ < kErrorAfterFails) {
+        spdlog::warn("调度延迟读取失败，沿用上次的值");
+      }
+      return last_runq_;
+    case RunqResult::kBaseline:
+    case RunqResult::kDisabled:
+      break;
+  }
+  return std::nullopt;
+}
+
 bool Collector::collect_once() {
   const int64_t ts = lm::wall_ms();
   const int64_t mono = lm::mono_ms();
@@ -75,6 +99,8 @@ bool Collector::collect_once() {
   const float disk = read_with_fallback(
       "磁盘", readers_.disk_util ? readers_.disk_util(mono) : std::nullopt, last_disk_,
       disk_fails_);
+
+  const std::optional<RunqStats> runq = read_runq();
 
   if (!cpu_->read(snap_)) {
     // CPU 读不到就没有可用的忙碌度，本周期不出样本，也不破坏基线
@@ -114,6 +140,11 @@ bool Collector::collect_once() {
   for (float b : core_busy) s.add_core_busy(b);
   s.set_mem_avail_ratio(mem);
   s.set_disk_util(disk);
+  if (runq) {
+    s.set_runq_p50_us(runq->p50_us);
+    s.set_runq_p99_us(runq->p99_us);
+    s.set_runq_drop_rate(runq->drop_rate);
+  }
 
   ring_.publish(s);
   seq_.fetch_add(1, std::memory_order_relaxed);

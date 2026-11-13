@@ -17,6 +17,7 @@
 
 #include "collector/collector.h"
 #include "collector/proc_readers.h"
+#include "collector/runq_probe.h"
 #include "collector/shm_cpu_source.h"
 #include "lm/clock.h"
 #include "lm/config.h"
@@ -97,6 +98,12 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  const std::string runq_mode = cfg.get<std::string>("runq", "auto");
+  if (runq_mode != "auto" && runq_mode != "on" && runq_mode != "off") {
+    spdlog::critical("配置项 runq 取值无效：{}（可选 auto、on、off）", runq_mode);
+    return 2;
+  }
+
   if (::access("/proc/stat", R_OK) != 0) {
     spdlog::critical("需要 Linux /proc（找不到 /proc/stat），worker 只能在 Linux 上运行");
     return 1;
@@ -117,13 +124,49 @@ int main(int argc, char** argv) {
   auto cpu_source = make_cpu_source(cpu_mode);
   if (!cpu_source) return 1;
 
+  // 调度延迟（eBPF runqlat）：auto 失败只警告不填字段；on 失败退出；off 不加载
+  std::shared_ptr<lm::worker::RunqProbe> runq;
+  if (runq_mode == "off") {
+    spdlog::info("调度延迟采集：未启用（配置 runq=off）");
+  } else {
+    try {
+      runq = std::make_shared<lm::worker::RunqProbe>();
+      spdlog::info("调度延迟采集：已启用（eBPF runqlat）");
+    } catch (const std::exception& e) {
+      if (runq_mode == "on") {
+        spdlog::critical("runq=on 但无法启用调度延迟采集：{}", e.what());
+        return 1;
+      }
+      spdlog::warn("调度延迟采集：未启用（{}），样本不含调度延迟字段", e.what());
+    }
+  }
+
   lm::worker::SampleRing ring;
   auto mem = std::make_shared<lm::worker::MemReader>();
   auto disk = std::make_shared<lm::worker::DiskReader>();
   lm::worker::MetricReaders readers{
       [mem] { return mem->read_avail_ratio(); },
       [disk](int64_t now) { return disk->read_util(now); },
+      nullptr,
   };
+  if (runq) {
+    auto window = std::make_shared<lm::worker::RunqWindow>();
+    readers.runq = [runq, window] {
+      lm::worker::RunqResult r;
+      lm::worker::RunqCumulative cum;
+      if (!runq->read(cum)) {
+        r.status = lm::worker::RunqResult::kFailed;
+        return r;
+      }
+      if (auto st = window->update(cum)) {
+        r.status = lm::worker::RunqResult::kOk;
+        r.stats = *st;
+      } else {
+        r.status = lm::worker::RunqResult::kBaseline;
+      }
+      return r;
+    };
+  }
   lm::worker::Collector collector(node_id, std::move(cpu_source), std::move(readers), ring,
                                   collect_interval);
 

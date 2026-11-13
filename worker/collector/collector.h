@@ -1,7 +1,7 @@
 #pragma once
 
 // 采集线程：按固定周期采一次 CPU、内存、磁盘，组装 Sample 写入环形缓冲。
-// 调度延迟（M3）与网卡（M4）字段暂不填。
+// 调度延迟由可选的 runq 读取函数提供（M3）；网卡（M4）字段暂不填。
 
 #include <atomic>
 #include <chrono>
@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "cpu_source.h"
+#include "runq_histogram.h"
 #include "lm/ring.h"
 #include "monitor.pb.h"
 
@@ -21,10 +22,18 @@ namespace lm::worker {
 
 using SampleRing = lm::Ring<lm::Sample, 8>;
 
-// 内存与磁盘读取接口，便于测试替换。
+// 调度延迟读取结果。
+struct RunqResult {
+  enum Status { kOk, kBaseline, kFailed, kDisabled };
+  Status status = kDisabled;
+  RunqStats stats;
+};
+
+// 各项指标的读取接口，便于测试替换。runq 为空等同 kDisabled（不设置调度延迟字段）。
 struct MetricReaders {
   std::function<std::optional<double>()> mem_avail_ratio;
   std::function<std::optional<double>(int64_t now_mono_ms)> disk_util;
+  std::function<RunqResult()> runq;
 };
 
 class Collector {
@@ -43,6 +52,7 @@ class Collector {
 
  private:
   void run();
+  std::optional<RunqStats> read_runq();
   float read_with_fallback(const char* name, std::optional<double> v, float& last, int& fails);
 
   const std::string node_id_;
@@ -56,6 +66,8 @@ class Collector {
   std::vector<float> last_core_busy_;
   float last_cpu_busy_ = 0.0F;
   bool has_busy_ = false;
+  std::optional<RunqStats> last_runq_;
+  int runq_fails_ = 0;
   float last_mem_ = 0.0F;
   float last_disk_ = 0.0F;
   int mem_fails_ = 0;

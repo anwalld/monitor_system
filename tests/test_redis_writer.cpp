@@ -86,6 +86,42 @@ TEST_F(RedisWriterTest, WritesHashTimeSeriesAndStream) {
   EXPECT_EQ(w.write_errors(), 0U);
 }
 
+TEST_F(RedisWriterTest, RunqFieldsWrittenZeroKeptAndClearedWhenAbsent) {
+  StorageQueue q(16);
+  RedisWriter w(q, opt_);
+  const int64_t now = 1'800'000'000'000;
+  auto with = acc("w1", 1, now - 1000);
+  with.sample.set_runq_p50_us(12.5F);
+  with.sample.set_runq_p99_us(850.0F);
+  with.sample.set_runq_drop_rate(0.0F);
+  w.write_batch({with});
+
+  std::unordered_map<std::string, std::string> h;
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["runq_p99_us"], "850.0000");
+  EXPECT_EQ(h["runq_p50_us"], "12.5000");
+  ASSERT_TRUE(h.count("runq_drop_rate"));  // 值为 0 也写
+  EXPECT_EQ(h["runq_drop_rate"], "0.0000");
+  std::vector<std::string> members;
+  redis_->zrange(k("node:w1:ts"), 0, -1, std::back_inserter(members));
+  ASSERT_EQ(members.size(), 1U);
+  EXPECT_NE(members[0].find("\"runq_p99_us\":850"), std::string::npos) << members[0];
+  EXPECT_NE(members[0].find("\"runq_drop_rate\":0"), std::string::npos) << members[0];
+
+  // 之后的样本不带调度延迟（如 Worker 以 runq=off 重启）：字段被删除，JSON 不含
+  w.write_batch({acc("w1", 2, now)});
+  EXPECT_FALSE(redis_->hexists(k("node:w1"), "runq_p99_us"));
+  EXPECT_FALSE(redis_->hexists(k("node:w1"), "runq_drop_rate"));
+  members.clear();
+  redis_->zrangebyscore(k("node:w1:ts"), sw::redis::BoundedInterval<double>(
+                                             static_cast<double>(now), static_cast<double>(now),
+                                             sw::redis::BoundType::CLOSED),
+                        std::back_inserter(members));
+  ASSERT_EQ(members.size(), 1U);
+  EXPECT_EQ(members[0].find("runq"), std::string::npos) << members[0];
+  EXPECT_EQ(w.write_errors(), 0U);
+}
+
 TEST_F(RedisWriterTest, TrimRemovesOlderThanRetention) {
   StorageQueue q(16);
   opt_.ts_retention_ms = 3600 * 1000;

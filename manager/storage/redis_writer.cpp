@@ -85,7 +85,7 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
       const lm::Sample& s = a.sample;
       const std::string json = to_json(s);
       const std::string hkey = key("node:" + s.node_id());
-      const std::map<std::string, std::string> fields = {
+      std::map<std::string, std::string> fields = {
           {"ts_ms", std::to_string(s.ts_ms())},
           {"seq", std::to_string(s.seq())},
           {"addr", a.addr},
@@ -95,7 +95,16 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
           {"disk_util", fmt_float(s.disk_util())},
           {"last_seen_ms", std::to_string(a.recv_wall_ms)},
       };
+      // 调度延迟（M3）：Worker 三个字段同时设置或同时不设置。未上报时删掉旧值，避免读到过时的 P99
+      if (s.has_runq_p99_us()) {
+        fields["runq_p50_us"] = fmt_float(s.runq_p50_us());
+        fields["runq_p99_us"] = fmt_float(s.runq_p99_us());
+        fields["runq_drop_rate"] = fmt_float(s.runq_drop_rate());
+      }
       pipe.hset(hkey, fields.begin(), fields.end());
+      if (!s.has_runq_p99_us()) {
+        pipe.hdel(hkey, {"runq_p50_us", "runq_p99_us", "runq_drop_rate"});
+      }
       pipe.zadd(key("node:" + s.node_id() + ":ts"), json, static_cast<double>(s.ts_ms()));
       pending_stream_[s.node_id()] = json;
       known_nodes_[s.node_id()] = true;

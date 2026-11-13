@@ -37,7 +37,7 @@ endfunction()
 lm_add_test(test_common test_ring.cpp test_config.cpp test_rate_limiter.cpp test_seqlock.cpp)
 target_link_libraries(test_common PRIVATE lm_common)
 
-lm_add_test(test_worker test_cpu_busy.cpp test_proc_readers.cpp test_collector.cpp test_shm_cpu_source.cpp)
+lm_add_test(test_worker test_cpu_busy.cpp test_proc_readers.cpp test_collector.cpp test_shm_cpu_source.cpp test_runq_histogram.cpp)
 target_link_libraries(test_worker PRIVATE lm_worker_collector)
 target_compile_definitions(test_worker PRIVATE LM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
