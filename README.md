@@ -1,252 +1,163 @@
-# monitor_system
+# linux-monitor
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![C++](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](https://isocpp.org/)
-[![gRPC](https://img.shields.io/badge/gRPC-1.50+-green.svg)](https://grpc.io/)
 [![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)](https://www.linux.org/)
 
-Linux 分布式服务器性能监控系统。Worker 部署在被监控机器上，通过内核模块、eBPF 和 procfs
-采集系统指标，以 Push 模式经 gRPC 上报给 Manager；Manager 负责健康评分、MySQL 持久化和查询服务。
+Linux 服务器性能监控与调度系统。Worker 采集节点指标，Manager 给每台节点打分，把每个任务派给此刻最合适的节点。AI 服务负责异常诊断、运维问答、负载预测和日报，Web 看板实时展示。
 
-> 本项目正在进行大规模重构与二次开发，接口和目录结构可能随时变化。
+> 正在按里程碑重构，目前完成到 M1：/proc 采集 → 上报 → Manager → Redis 的链路已打通。进度见下文“里程碑”。
 
-## 特性
+## 目标
 
-- **低开销采集**：内核模块 + eBPF，缺少 eBPF 依赖时自动回退到 procfs
-- **全面指标**：CPU、负载、软中断、内存、磁盘、网络
-- **Push 架构**：Worker 定时主动推送，Manager 无需轮询
-- **健康评分**：多维度加权评分，快速判断服务器状态
-- **查询服务**：gRPC QueryService，支持历史、趋势、异常、排名及各类明细查询
-- **持久化**：MySQL 存储历史数据
+- **派给最闲的节点**：任务派给当前最闲的节点。别人直接登录节点跑的负载，Manager 也看得到。
+- **故障隔离**：故障节点 3 秒内隔离，恢复后自动慢启动、重新接任务。
+- **低开销采集**：CPU 读取耗时比 `/proc/stat` 低 85% 以上，撑得住 1ms 级的急救探测。
+- **AI 只给建议**：AI 服务整个挂掉，调度照常运行。
 
 ## 架构
 
 ```
-┌─────────────────┐     gRPC Push      ┌─────────────────┐
-│     Worker      │ ─────────────────► │     Manager     │
-│  (被监控服务器)  │    MonitorInfo     │   (管理服务器)   │
-│                 │   默认每 10 秒      │                 │
-│  CPU / 负载     │                    │  数据接收       │
-│  软中断 / 内存  │                    │  健康评分       │
-│  磁盘 / 网络    │                    │  MySQL 存储     │
-│                 │                    │  查询服务       │
-└─────────────────┘                    └─────────────────┘
-        │                                      │
-        │ 内核模块 / eBPF / procfs              │ QueryService
-        ▼                                      ▼
-   /dev/cpu_stat_monitor                  query_client / 其他客户端
-   /dev/cpu_softirq_monitor
+            gRPC Report（每秒）              旁路（挂掉不影响调度）
+ ┌────────┐ ───────────────────► ┌─────────┐ ──► Redis（热数据） ──► AI 服务
+ │ Worker │                      │ Manager │ ──► MySQL（5 分钟聚合）
+ │  ×N    │ ◄─── Probe/Rescue ── │         │ ──► WebSocket ──► 看板
+ └────────┘                      └─────────┘
+     ▲  任务直连 Submit                ▲ Allocate
+     └──────────── 客户端 ─────────────┘
 ```
 
-## 目录结构
+调度链路上只有 Worker 和 Manager 两方。客户端从 Manager 拿到 Worker 地址后，直连 Worker 提交任务，任务数据不经过 Manager。
+
+## 目录
 
 ```
-monitor_system/
-├── worker/              # 采集端
-│   ├── include/         # monitor/ rpc/ utils/
-│   ├── src/
-│   │   ├── monitor/     # 各类 Monitor 实现
-│   │   ├── rpc/         # 数据推送
-│   │   ├── kmod/        # 内核模块
-│   │   └── ebpf/        # eBPF 程序
-│   └── scripts/
-├── manager/             # 管理端
-│   ├── include/
-│   ├── src/
-│   └── sql/             # 数据库初始化脚本
-├── proto/               # Protobuf / gRPC 定义
-├── openspec/            # OpenSpec 规格与变更记录
-└── CMakeLists.txt
+proto/        monitor.proto（上报）  task.proto（任务/探测）  advisor.proto（AI 预测）
+common/       环形缓冲、配置、日志
+worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  main.cpp
+manager/      ingest/（接收上报、节点表）  storage/（Redis 热数据）  main.cpp
+tests/        GoogleTest 单元测试与 Redis 集成测试
+config/       worker.yaml、manager.yaml 样例
+deploy/       docker-compose、MySQL 表结构、策略路由与自检脚本、systemd、安装脚本
+openspec/     需求规格与按里程碑划分的变更
 ```
 
-## 环境要求
+后续里程碑会加入 `kmod/`、`bpf/`、`ai/`、`web/`、`experiments/`。
 
-| 组件 | 版本 |
-|------|------|
-| 操作系统 | Linux（Ubuntu 20.04+ / CentOS 8+） |
-| 编译器 | GCC 9+ 或 Clang 10+（C++17） |
-| CMake | 3.10+ |
-| 内核 | 5.4+（eBPF 需要 BTF 支持） |
-| MySQL | 8.0+（Manager 必需） |
+## 构建
 
-## 安装依赖
+依赖：
+
+- CMake ≥ 3.20、C++17 编译器
+- gRPC、Protobuf、spdlog、yaml-cpp
+- hiredis（Manager 需要）
+
+redis-plus-plus 和 GoogleTest 找不到时，CMake 会自动下载源码构建。
+
+### Ubuntu 24.04（Worker 与 Manager 的目标环境）
 
 ```bash
-# Ubuntu / Debian
-sudo apt update
-sudo apt install -y \
-    build-essential cmake \
-    libprotobuf-dev protobuf-compiler \
-    libgrpc++-dev protobuf-compiler-grpc \
-    linux-headers-$(uname -r) \
-    mysql-server libmysqlclient-dev \
-    clang llvm libbpf-dev libelf-dev zlib1g-dev bpftool
+sudo apt install -y build-essential cmake ninja-build pkg-config \
+    libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler \
+    libspdlog-dev libyaml-cpp-dev libhiredis-dev
+cmake -S . -B build -G Ninja
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
+
+### macOS（开发机）
 
 ```bash
-# CentOS / RHEL
-sudo yum install -y \
-    gcc-c++ cmake \
-    protobuf-devel protobuf-compiler \
-    grpc-devel grpc-plugins \
-    kernel-devel \
-    mysql-server mysql-devel \
-    clang llvm libbpf-devel elfutils-libelf-devel zlib-devel bpftool
+brew install cmake ninja grpc protobuf spdlog yaml-cpp hiredis
+cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+cmake --build build && ctest --test-dir build
 ```
 
-eBPF 程序默认从 `/usr/include/vmlinux.h` 读取内核类型定义，可用以下命令生成：
+macOS 上能编译、能跑单元测试，但 Worker 依赖 `/proc`，只能在 Linux 上运行。
+
+### 在 macOS 上用容器跑 Linux 构建与测试
 
 ```bash
-bpftool btf dump file /sys/kernel/btf/vmlinux format c | sudo tee /usr/include/vmlinux.h > /dev/null
+docker build -f deploy/docker/builder.Dockerfile -t lm-builder .
+docker run --rm -v "$PWD":/src -w /src lm-builder bash -c \
+  'cmake -S . -B build-linux -G Ninja && cmake --build build-linux && ctest --test-dir build-linux'
 ```
 
-## 数据库
-
-```sql
-CREATE DATABASE monitor_db;
-CREATE USER 'monitor'@'localhost' IDENTIFIED BY 'monitor123';
-GRANT ALL PRIVILEGES ON monitor_db.* TO 'monitor'@'localhost';
-FLUSH PRIVILEGES;
-```
-
-```bash
-mysql -u monitor -pmonitor123 monitor_db < manager/sql/init_server_performance.sql
-```
-
-数据库连接信息目前写在 `manager/src/main.cpp` 和 `manager/src/host_manager.cpp` 中，按需修改。
-
-| 表名 | 说明 |
-|------|------|
-| `server_performance` | 性能汇总 |
-| `server_net_detail` | 网络接口明细 |
-| `server_disk_detail` | 磁盘设备明细 |
-| `server_mem_detail` | 内存明细 |
-| `server_softirq_detail` | 软中断明细 |
-
-## 编译
-
-```bash
-git clone git@github.com:anwalld/monitor_system.git
-cd monitor_system
-cmake -S . -B build
-cmake --build build -j$(nproc)
-```
-
-CMake 选项：
+### CMake 选项
 
 | 选项 | 默认 | 说明 |
 |------|------|------|
-| `BUILD_MANAGER` | `ON` | 编译 Manager（需要 MySQL） |
-| `ENABLE_EBPF` | `ON` | 启用 eBPF 网络采集，依赖缺失时自动回退 procfs |
+| `LM_BUILD_MANAGER` | ON | 编译 Manager |
+| `LM_BUILD_TESTS` | ON | 编译单元测试 |
+| `LM_ENABLE_TSAN` | OFF | 开启 ThreadSanitizer。用到 gRPC 的测试在该模式下不注册 |
 
-内核模块单独编译：
-
-```bash
-make -C worker/src/kmod
-```
+Redis 集成测试需要设置环境变量 `LM_TEST_REDIS_URI=tcp://host:6379`（有密码时再设 `LM_TEST_REDIS_PASSWORD`），否则跳过。
 
 ## 运行
 
-### 1. 启动 Manager
+搭建环境的详细步骤见 [deploy/README.md](deploy/README.md)。
+
+### Manager 机
 
 ```bash
-./build/manager/manager
+cd deploy
+cp .env.example .env      # 填写三个密码
+docker compose up -d --build --wait
 ```
 
-默认监听 `0.0.0.0:50051`。
+compose 会启动 Redis、MySQL 和 Manager。Manager 用 host 网络，gRPC 监听 50051 端口。
 
-### 2. 加载内核模块
+### Worker 机
+
+第一步，每台 Worker 机先做两件事：
+
+1. 运行 `deploy/check-worker-host.sh` 自检。
+2. 用 `deploy/policy-route.sh` 配好多网卡策略路由。
+
+第二步，在一台与 Worker 同架构的 Linux 上构建出 `build-linux/worker/worker`，然后批量安装：
 
 ```bash
-sudo insmod worker/src/kmod/cpu_stat_collector.ko
-sudo insmod worker/src/kmod/softirq_collector.ko
-ls /dev/cpu_stat_monitor /dev/cpu_softirq_monitor
+deploy/install-worker.sh -m <manager_ip>:50051 -u ubuntu worker1 worker2 worker3
 ```
 
-### 3. 启动 Worker
+安装脚本会做这些事：
+
+- 装好运行时库
+- 创建系统用户 `lm`
+- 写入 `/etc/lm/worker.yaml`，其中 `node_id` 留空，表示使用主机名
+- 用 systemd 启动 `lm-worker`
+
+### 单机调试
 
 ```bash
-# 参数：Manager 地址 [推送间隔秒数，默认 10]
-sudo ./build/worker/worker 192.168.1.100:50051
+./build/worker/worker -c config/worker.yaml --dry-run    # 不上报，每秒把样本以 JSON 打印出来
+LM_REDIS_PASSWORD=... ./build/manager/manager -c config/manager.yaml
 ```
 
-加载 eBPF 程序需要 root 权限。
-
-### 4. 查询历史数据
+### 查看数据
 
 ```bash
-# 参数：Manager 地址、主机标识、起始时间、结束时间、[页码=1]、[每页条数=100]
-./build/manager/query_client 127.0.0.1:50051 server1_192.168.1.101 \
-  '2026-09-17T00:00:00+08:00' '2026-09-17T23:59:59+08:00' 1 20
+redis-cli HGETALL node:<node_id>                         # 最新指标
+redis-cli ZRANGE node:<node_id>:ts -5 -1                  # 最近 5 秒样本
+redis-cli XREVRANGE stream:metrics + - COUNT 1            # 最近一秒所有节点
 ```
 
-- 主机标识为 Manager 日志中的 `hostname_ip`
-- 时间使用带时区的 RFC3339 格式（`Z` 或 `+08:00`），按秒查询
-- 超时 10 秒；退出码：成功 0，RPC 失败 1，参数错误 2
-- `./build/manager/query_client --help` 查看说明
+## 里程碑
 
-### 5. 停止与卸载
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| M0 环境 | 双网卡策略路由、主机自检、Redis/MySQL 编排 | 脚本完成，待真实 Worker 验收 |
+| M1 骨架 | proto、/proc 采集、环形缓冲、上报、Manager 写 Redis | 代码完成，待真实 Worker 验收 |
+| M2 内核模块 | cpustat 共享页 + seqlock，替换 /proc 读 CPU | |
+| M3 eBPF | 调度延迟直方图 | |
+| M4 多网卡 | ICMP 探测、TCP 重传率、流量 | |
+| M5 调度 | 评分、剔除、概率选择、在途账、任务流程 | |
+| M6 节点状态机 | 熔断、急救、慢启动、退避 | |
+| M7 存储与看板 | MySQL 冷数据、REST/WebSocket、Vue 看板 | |
+| M8–M9 AI | 异常诊断、运维问答、负载预测、日报 | |
+| M10 对照实验 | 与轮询、加权轮询对比 | |
 
-```bash
-sudo rmmod softirq_collector
-sudo rmmod cpu_stat_collector
-```
-
-## 监控指标
-
-| 监控项 | 数据来源 | 内容 |
-|--------|----------|------|
-| CPU 状态 | 内核模块 / procfs | 各核使用率、用户态/内核态/空闲占比 |
-| CPU 负载 | `/proc/loadavg` | 1/5/15 分钟平均负载 |
-| 软中断 | 内核模块 / procfs | 各核软中断统计 |
-| 内存 | `/proc/meminfo` | 总量、可用、缓存、Swap 等 |
-| 磁盘 | `/proc/diskstats` | 读写速率、IOPS、延迟、利用率 |
-| 网络 | eBPF / procfs | 收发速率、包数、错误与丢包 |
-
-## 查询接口
-
-| 接口 | 功能 |
-|------|------|
-| `QueryPerformance` | 时间段性能数据 |
-| `QueryTrend` | 变化率趋势 |
-| `QueryAnomaly` | 异常数据检测 |
-| `QueryScoreRank` | 评分排名 |
-| `QueryLatestScore` | 最新评分 |
-| `QueryNetDetail` | 网络明细 |
-| `QueryDiskDetail` | 磁盘明细 |
-| `QueryMemDetail` | 内存明细 |
-| `QuerySoftIrqDetail` | 软中断明细 |
-
-## 健康评分
-
-```
-Score = CPU × 35% + Mem × 30% + Load × 15% + Disk × 15% + Net × 5%
-
-CPU  = 1 - cpu_percent / 100
-Mem  = 1 - mem_used_percent / 100
-Load = 1 - load_avg_1 / (cpu_cores × 1.5)
-Disk = 1 - disk_util_percent / 100
-Net  = 1 - bandwidth_usage / max_bandwidth
-```
-
-## 关键参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| 推送间隔 | 10 秒 | Worker 推送周期 |
-| 离线阈值 | 60 秒 | 超时无数据视为离线 |
-| gRPC 端口 | 50051 | Manager 监听端口 |
-| 主机标识 | `hostname_ip` | 如 `web-server_10.0.0.5` |
-
-## 开发流程
-
-项目使用 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 管理需求与变更，项目约定见
-[`openspec/config.yaml`](openspec/config.yaml)。
-
-```bash
-openspec list            # 查看进行中的变更
-openspec validate --all  # 校验规格
-```
+每个里程碑对应 `openspec/changes/` 下的一个变更，开发流程见 [OpenSpec](https://github.com/Fission-AI/OpenSpec)。
 
 ## 许可证
 

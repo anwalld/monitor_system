@@ -1,0 +1,9 @@
+# Manager 配置样例
+listen: 0.0.0.0:50051          # gRPC 监听地址
+worker_port: 50052             # Worker gRPC 端口，与上报对端 IP 拼成 Worker 地址
+log_level: info
+storage:
+  queue_capacity: 4096         # 存储队列容量，满时丢最旧
+redis:
+  uri: tcp://127.0.0.1:6379    # 密码从环境变量 LM_REDIS_PASSWORD 读取
+  ts_retention_s: 3600         # node:{id}:ts 保留时长

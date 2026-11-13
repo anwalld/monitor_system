@@ -1,64 +1,48 @@
-# Manager - 管理者服务器
-# 部署在管理端，接收工作者推送的数据、存储到数据库、提供查询服务
-
-# 查找 gRPC
-find_package(gRPC CONFIG QUIET)
-if(NOT gRPC_FOUND)
-    find_library(GRPC_LIBRARY grpc)
-    find_library(GRPCPP_LIBRARY grpc++)
-    if(GRPC_LIBRARY AND GRPCPP_LIBRARY)
-        add_library(grpc_lib INTERFACE)
-        target_link_libraries(grpc_lib INTERFACE ${GRPC_LIBRARY} ${GRPCPP_LIBRARY})
-        add_library(gRPC::grpc++ ALIAS grpc_lib)
-    endif()
+find_package(redis++ CONFIG QUIET)
+if(redis++_FOUND)
+  if(TARGET redis++::redis++_static)
+    set(LM_REDISPP_TARGET redis++::redis++_static)
+  else()
+    set(LM_REDISPP_TARGET redis++::redis++)
+  endif()
+else()
+  # Ubuntu apt 的 libredis++-dev 没有 CMake config；Homebrew 没有 redis++，从源码构建
+  find_path(REDISPP_INCLUDE_DIR sw/redis++/redis++.h)
+  find_library(REDISPP_LIBRARY redis++)
+  find_library(HIREDIS_LIBRARY hiredis REQUIRED)
+  if(REDISPP_INCLUDE_DIR AND REDISPP_LIBRARY)
+    add_library(lm_redispp INTERFACE)
+    target_include_directories(lm_redispp INTERFACE ${REDISPP_INCLUDE_DIR})
+    target_link_libraries(lm_redispp INTERFACE ${REDISPP_LIBRARY} ${HIREDIS_LIBRARY})
+    set(LM_REDISPP_TARGET lm_redispp)
+  else()
+    message(STATUS "redis-plus-plus not found, building from source")
+    include(FetchContent)
+    set(REDIS_PLUS_PLUS_BUILD_TEST OFF CACHE BOOL "" FORCE)
+    set(REDIS_PLUS_PLUS_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+    set(REDIS_PLUS_PLUS_CXX_STANDARD 17 CACHE STRING "" FORCE)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)  # 上游 cmake_minimum_required 版本过低，CMake 4 需要
+    FetchContent_Declare(redis_plus_plus
+      URL https://github.com/sewenew/redis-plus-plus/archive/refs/tags/1.3.13.tar.gz
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+    FetchContent_MakeAvailable(redis_plus_plus)
+    # 上游在某些配置下没有把生成的 hiredis_features.h 所在目录加进接口头文件路径
+    target_include_directories(redis++_static PUBLIC $<BUILD_INTERFACE:${redis_plus_plus_BINARY_DIR}/src>)
+    target_link_libraries(redis++_static PUBLIC ${HIREDIS_LIBRARY})
+    set(LM_REDISPP_TARGET redis++_static)
+  endif()
 endif()
 
-# MySQL 支持选项
-option(ENABLE_MYSQL "Enable MySQL support for data persistence" ON)
+add_library(lm_manager_ingest STATIC
+  ingest/node_table.cpp
+  ingest/collector_service.cpp)
+target_include_directories(lm_manager_ingest PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lm_manager_ingest PUBLIC lm_common lm_proto)
 
-set(MANAGER_SOURCES
-    src/main.cpp
-    src/host_manager.cpp
-    src/query_manager.cpp
-    src/rpc/grpc_server.cpp
-    src/rpc/query_service.cpp
-)
+add_library(lm_manager_storage STATIC
+  storage/redis_writer.cpp)
+target_include_directories(lm_manager_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lm_manager_storage PUBLIC lm_manager_ingest ${LM_REDISPP_TARGET})
 
-# 可执行文件: manager (管理者服务器)
-add_executable(manager ${MANAGER_SOURCES})
-
-target_include_directories(manager PUBLIC
-    ${PROJECT_SOURCE_DIR}/manager/include
-)
-
-# 基础链接库
-set(MANAGER_LIBS monitor_proto gRPC::grpc++)
-
-# MySQL 依赖（可选）
-if(ENABLE_MYSQL)
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(MYSQL mysqlclient)
-    endif()
-    
-    if(MYSQL_FOUND)
-        message(STATUS "MySQL support enabled")
-        target_compile_definitions(manager PRIVATE ENABLE_MYSQL=1)
-        target_include_directories(manager PUBLIC ${MYSQL_INCLUDE_DIRS})
-        list(APPEND MANAGER_LIBS ${MYSQL_LIBRARIES})
-    else()
-        message(WARNING "MySQL not found, disabling MySQL support")
-    endif()
-endif()
-
-target_link_libraries(manager PUBLIC ${MANAGER_LIBS})
-
-# 历史查询客户端，与 Manager 共用协议，不依赖 MySQL 客户端库
-add_executable(query_client
-    src/query_main.cpp
-    src/rpc/rpc_client.cpp
-)
-target_include_directories(query_client PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-target_link_libraries(query_client PRIVATE monitor_proto gRPC::grpc++)
+add_executable(manager main.cpp)
+target_link_libraries(manager PRIVATE lm_manager_ingest lm_manager_storage)

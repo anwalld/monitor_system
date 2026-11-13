@@ -1,4 +1,4 @@
-# Manager 侧服务编排：Redis、MySQL；manager、ai、nginx 在后续里程碑加入。
+# Manager 侧服务编排：Redis、MySQL、manager；ai、nginx 在后续里程碑加入。
 # 用法：cp .env.example .env && 编辑 .env && docker compose up -d
 
 name: lm
@@ -47,6 +47,21 @@ services:
       timeout: 3s
       retries: 20
       start_period: 20s
+
+  manager:
+    build:
+      context: ..
+      dockerfile: deploy/docker/manager.Dockerfile
+    image: lm-manager
+    restart: unless-stopped
+    # host 网络：Manager 看到的上报对端 IP 就是 Worker 的真实地址（Worker 地址 = 对端 IP + 50052）
+    network_mode: host
+    environment:
+      LM_REDIS_URI: tcp://127.0.0.1:${REDIS_PORT:-6379}
+      LM_REDIS_PASSWORD: ${REDIS_PASSWORD:?请在 deploy/.env 中设置 REDIS_PASSWORD}
+    depends_on:
+      redis:
+        condition: service_healthy
 
 volumes:
   redis-data:

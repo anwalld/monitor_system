@@ -1,0 +1,22 @@
+[Unit]
+Description=linux-monitor Worker (collect and report node metrics)
+Wants=network-online.target
+After=network-online.target lm-policy-route.service
+
+[Service]
+Type=simple
+User=lm
+Group=lm
+ExecStart=/opt/lm/bin/worker -c /etc/lm/worker.yaml
+Restart=always
+RestartSec=2
+# 后续里程碑需要：ICMP 原始套接字（M4）、加载 eBPF（M3）。M1 只读 /proc，不依赖这些能力。
+AmbientCapabilities=CAP_NET_RAW CAP_BPF CAP_PERFMON
+CapabilityBoundingSet=CAP_NET_RAW CAP_BPF CAP_PERFMON
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

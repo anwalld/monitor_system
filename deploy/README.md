@@ -50,6 +50,18 @@ MySQL 第一次以空数据卷启动时，会自动执行 `mysql/init.sql`，建
 
 已经初始化过的数据卷不会重新执行这个文件。
 
+### 拉不到 Docker Hub 镜像时
+
+如果 Manager 机访问 Docker Hub 超时，可以在能联网、且 CPU 架构相同的机器上准备好镜像，再通过 ssh 直接传过去：
+
+```bash
+docker pull redis:7.2 && docker pull mysql:8.0
+docker build -f deploy/docker/manager.Dockerfile -t lm-manager .
+docker save redis:7.2 mysql:8.0 lm-manager | gzip -1 | ssh <user>@<manager机> 'gunzip | sudo docker load'
+```
+
+传好后在 Manager 机上用 `docker compose up -d --no-build --pull never --wait` 启动。
+
 ### 4. 验收
 
 ```bash

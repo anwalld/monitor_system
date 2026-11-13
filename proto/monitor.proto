@@ -1,0 +1,43 @@
+// Worker → Manager：每秒上报节点样本与任务事件。
+// 已发布的字段号不得复用或修改含义，新增字段只能追加。
+syntax = "proto3";
+package lm;
+
+message NicStat {
+  string name = 1;
+  float rtt_ms = 2;          // 本周期平均 RTT
+  float rtt_jitter_ms = 3;   // RTT 标准差
+  float timeout_rate = 4;    // 0~1
+  float retrans_rate = 5;    // 重传段 / 发送段
+  uint64 rx_bps = 6;
+  uint64 tx_bps = 7;
+}
+
+message Sample {
+  string node_id = 1;
+  uint64 seq = 2;                  // Worker 内单调递增
+  int64 ts_ms = 3;                 // 采集时刻
+  float cpu_busy = 4;              // 全机 0~1
+  repeated float core_busy = 5;    // 每核 0~1
+  optional float runq_p50_us = 6;  // optional：用 has_xxx() 区分“没上报”和 0
+  optional float runq_p99_us = 7;
+  optional float runq_drop_rate = 8;
+  float mem_avail_ratio = 9;
+  float disk_util = 10;
+  repeated NicStat nics = 11;
+}
+
+message TaskEvent {
+  enum Kind { KIND_UNSPECIFIED = 0; RECEIVED = 1; DONE = 2; FAILED = 3; }
+  string task_id = 1;
+  Kind kind = 2;
+  int64 ts_ms = 3;
+  uint32 exec_ms = 4;
+}
+
+message Ack {}
+
+service Collector {                    // Worker → Manager
+  rpc Report(Sample) returns (Ack);    // 一元调用，超时 = 上报周期的一半，失败不重传
+  rpc OnTaskEvent(TaskEvent) returns (Ack);
+}

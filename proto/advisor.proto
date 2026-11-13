@@ -1,0 +1,11 @@
+// AI 服务 → Manager：负载预测。M1 只生成代码，服务在 M9 实现。
+syntax = "proto3";
+package lm;
+
+import "monitor.proto";
+
+service Advisor {                      // AI 服务 → Manager
+  rpc PushPredictions(PredictionBatch) returns (Ack);
+}
+message Prediction      { string node_id = 1; float cpu_busy_30s = 2; float factor = 3; }
+message PredictionBatch { int64 ts_ms = 1; uint32 ttl_ms = 2; repeated Prediction items = 3; }

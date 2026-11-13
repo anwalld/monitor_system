@@ -1,0 +1,25 @@
+// 客户端申请节点、提交任务；Manager 探测 Worker。M1 只生成代码，服务在 M5/M6 实现。
+syntax = "proto3";
+package lm;
+
+import "monitor.proto";
+
+service Scheduler {                    // 客户端 → Manager
+  rpc Allocate(AllocateReq) returns (AllocateResp);
+  rpc MarkSent(TaskRef) returns (Ack);
+}
+message AllocateReq  { string client_id = 1; uint64 input_bytes = 2; string kind = 3; }
+message AllocateResp { string task_id = 1; string worker_addr = 2; }
+message TaskRef      { string task_id = 1; }
+
+service WorkerTask {                   // 客户端 / Manager → Worker
+  rpc Submit(TaskReq) returns (TaskResult);
+  rpc Probe(ProbeReq) returns (ProbeResp);                   // 低频探测，和 Submit 走同一套入口与线程池
+  rpc Rescue(stream RescueReq) returns (stream RescueResp);  // 急救高频探测
+}
+message TaskReq    { string task_id = 1; string command = 2; repeated string args = 3; uint32 timeout_s = 4; }
+message TaskResult { string task_id = 1; int32 exit_code = 2; bytes stdout_tail = 3; uint32 exec_ms = 4; }
+message ProbeReq   { uint64 seq = 1; }
+message ProbeResp  { uint64 seq = 1; }
+message RescueReq  { uint64 seq = 1; int64 send_ts_us = 2; }
+message RescueResp { uint64 seq = 1; int64 send_ts_us = 2; Sample sample = 3; }

@@ -1,0 +1,7 @@
+# Worker 配置样例
+node_id: ""                    # 留空则用主机名；最长 64 字节
+manager_addr: 127.0.0.1:50051  # Manager gRPC 地址
+collect_interval_ms: 1000      # 采集周期
+report_interval_ms: 1000       # 上报周期
+report_deadline_ms: 500        # 每次上报的截止时间
+log_level: info                # trace/debug/info/warn/error
