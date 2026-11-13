@@ -26,10 +26,18 @@ class CpuSource {
   virtual bool read(CpuSnapshot& out) = 0;
 };
 
-// 由相邻两次快照计算每核与全机忙碌度。第一次调用、或 CPU 集合变化时只存基线返回 false。
+enum class BusyResult {
+  kBaseline,   // 第一次调用或 CPU 集合变化：只存基线，没有忙碌度
+  kNoNewData,  // 与上次是同一份数据（所有核 total 都没变）：不更新基线，调用方沿用上次的值
+  kUpdated,    // 已算出新的忙碌度
+};
+
+// 由相邻两次快照计算每核与全机忙碌度。
+// 共享页按固定周期刷新，与采集周期相位无关，相邻两次采集可能读到同一次刷新，此时返回 kNoNewData，
+// 下一次按更长的时间差计算，平均值仍正确。
 class CpuBusyCalculator {
  public:
-  bool update(const CpuSnapshot& snap, std::vector<float>& core_busy, float& cpu_busy);
+  BusyResult update(const CpuSnapshot& snap, std::vector<float>& core_busy, float& cpu_busy);
   void reset() { has_prev_ = false; }
 
  private:

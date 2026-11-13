@@ -17,6 +17,7 @@
 
 #include "collector/collector.h"
 #include "collector/proc_readers.h"
+#include "collector/shm_cpu_source.h"
 #include "lm/clock.h"
 #include "lm/config.h"
 #include "lm/log.h"
@@ -32,6 +33,26 @@ std::string default_node_id() {
   char host[256] = {};
   if (::gethostname(host, sizeof(host) - 1) != 0 || host[0] == '\0') return "worker";
   return host;
+}
+
+// 按 cpu_source 配置创建 CPU 来源：auto 优先共享页、失败回退 /proc；shm 失败返回空；proc 直接用 /proc。
+std::unique_ptr<lm::worker::CpuSource> make_cpu_source(const std::string& mode) {
+  if (mode == "proc") {
+    spdlog::info("CPU 来源：/proc/stat（配置 cpu_source=proc）");
+    return std::make_unique<lm::worker::ProcCpuSource>();
+  }
+  try {
+    auto shm = std::make_unique<lm::worker::ShmCpuSource>();
+    spdlog::info("CPU 来源：cpustat 共享页 {}（刷新周期 {}us）", shm->path(), shm->interval_us());
+    return shm;
+  } catch (const std::exception& e) {
+    if (mode == "shm") {
+      spdlog::critical("cpu_source=shm 但无法使用 cpustat 共享页：{}", e.what());
+      return nullptr;
+    }
+    spdlog::warn("无法使用 cpustat 共享页（{}），回退到 /proc/stat", e.what());
+    return std::make_unique<lm::worker::ProcCpuSource>();
+  }
 }
 
 void usage() {
@@ -70,6 +91,12 @@ int main(int argc, char** argv) {
 
   lm::init_logging("worker", cfg.get<std::string>("log_level", "info"));
 
+  const std::string cpu_mode = cfg.get<std::string>("cpu_source", "auto");
+  if (cpu_mode != "auto" && cpu_mode != "shm" && cpu_mode != "proc") {
+    spdlog::critical("配置项 cpu_source 取值无效：{}（可选 auto、shm、proc）", cpu_mode);
+    return 2;
+  }
+
   if (::access("/proc/stat", R_OK) != 0) {
     spdlog::critical("需要 Linux /proc（找不到 /proc/stat），worker 只能在 Linux 上运行");
     return 1;
@@ -87,6 +114,9 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
+  auto cpu_source = make_cpu_source(cpu_mode);
+  if (!cpu_source) return 1;
+
   lm::worker::SampleRing ring;
   auto mem = std::make_shared<lm::worker::MemReader>();
   auto disk = std::make_shared<lm::worker::DiskReader>();
@@ -94,8 +124,8 @@ int main(int argc, char** argv) {
       [mem] { return mem->read_avail_ratio(); },
       [disk](int64_t now) { return disk->read_util(now); },
   };
-  lm::worker::Collector collector(node_id, std::make_unique<lm::worker::ProcCpuSource>(),
-                                  std::move(readers), ring, collect_interval);
+  lm::worker::Collector collector(node_id, std::move(cpu_source), std::move(readers), ring,
+                                  collect_interval);
 
   std::unique_ptr<lm::worker::Reporter> reporter;
   if (dry_run) {

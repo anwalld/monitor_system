@@ -1,0 +1,2 @@
+# cpustat 内核模块的设备节点：root 与 lm 组只读（Worker 以 lm 用户运行）
+KERNEL=="cpustat", SUBSYSTEM=="misc", OWNER="root", GROUP="lm", MODE="0440"

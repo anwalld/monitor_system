@@ -22,6 +22,8 @@ if(LM_ENABLE_TSAN)
   foreach(_n ${_names})
     string(APPEND _content "called_from_lib:${_n}\n")
   endforeach()
+  # seqlock 读端按设计会与写端并发拷贝，撕裂结果靠 seq 比较丢弃（见 common/include/lm/seqlock_reader.h）
+  string(APPEND _content "race:lm::seqlock_read\n")
   file(WRITE ${_supp} "${_content}")
   set(LM_TEST_ENV "TSAN_OPTIONS=halt_on_error=1 suppressions=${_supp}")
 endif()
@@ -32,10 +34,10 @@ function(lm_add_test name)
   gtest_discover_tests(${name} DISCOVERY_TIMEOUT 30 PROPERTIES ENVIRONMENT "${LM_TEST_ENV}")
 endfunction()
 
-lm_add_test(test_common test_ring.cpp test_config.cpp test_rate_limiter.cpp)
+lm_add_test(test_common test_ring.cpp test_config.cpp test_rate_limiter.cpp test_seqlock.cpp)
 target_link_libraries(test_common PRIVATE lm_common)
 
-lm_add_test(test_worker test_cpu_busy.cpp test_proc_readers.cpp test_collector.cpp)
+lm_add_test(test_worker test_cpu_busy.cpp test_proc_readers.cpp test_collector.cpp test_shm_cpu_source.cpp)
 target_link_libraries(test_worker PRIVATE lm_worker_collector)
 target_compile_definitions(test_worker PRIVATE LM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 

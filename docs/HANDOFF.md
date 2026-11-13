@@ -1,6 +1,6 @@
 # 交接文档
 
-更新时间：2026-11-13（UTC+8），磁盘阈值决定之后
+更新时间：2026-11-13 09:45（UTC+8），M2 完成之后
 
 ## 一句话现状
 
@@ -10,7 +10,11 @@
 - **M1**：22 项任务完成 21 项。干净 clone 构建通过，虚拟机上的采集、部署、上报和故障恢复都已验证。
   - 4.3 已完成：用户同意把磁盘阈值改为“与内核 io_ticks 误差 ≤ 0.05”，复验最大误差 0.006。
   - 7.1 需要 3 台 Worker。
-- **未提交**：所有改动都还在工作区，没有 commit。用户没要求提交，提交前先问用户。
+- **M2**：17 项任务全部完成，虚拟机验收通过（`openspec/changes/m2-cpustat-kmod/`）。
+  - 读取耗时：共享页 11.7 ns，/proc/stat 7.7 µs，降低 99.8%。
+  - 加载卸载 1000 次无残留；1 毫秒周期跑 10 分钟 dmesg 无警告；重启后模块自动加载。
+  - kmemleak 没做：Ubuntu 默认内核未开启。
+- **提交状态**：M0、M1 已提交并推送（a7fe517、b99badf）。M2 的改动还在工作区，没有 commit，提交前先问用户。
 
 ## 2026-11-13 这次做了什么
 
@@ -29,9 +33,10 @@
 
 ### 虚拟机当前状态（保留着，方便继续测）
 
-- **systemd**：`lm-worker` 在运行，二进制在 `/opt/lm/bin/worker`，配置在 `/etc/lm/worker.yaml`，`manager_addr` 是 `127.0.0.1:50051`。
+- **systemd**：`lm-worker` 在运行（M2 版本，读 cpustat 共享页），二进制在 `/opt/lm/bin/worker`，配置在 `/etc/lm/worker.yaml`，`manager_addr` 是 `127.0.0.1:50051`。
+- **cpustat 模块**：源码在 `/opt/lm/kmod/cpustat`，模块装在 `/lib/modules/6.8.0-149-generic/extra/`，由 `/etc/modules-load.d/cpustat.conf` 开机加载，udev 规则 `/etc/udev/rules.d/99-cpustat.rules`。
 - **docker compose**：项目 `lm` 在 `~/lm/deploy`，跑着 redis、mysql、manager。密码是随机生成的，在虚拟机的 `~/lm/deploy/.env` 里。
-- **已装的软件**：stress、fio、docker.io、docker-compose-v2、Worker 运行时库。
+- **已装的软件**：stress、fio、docker.io、docker-compose-v2、Worker 运行时库、build-essential、linux-headers。
 - **策略路由**：已撤销，`ip rule` 恢复原样。`/opt/lm/deploy/policy-route.conf` 里写的是 `ens160` 和 `ens192 172.16.13.1`。
 
 ## 关键链接与环境
@@ -112,23 +117,18 @@ Ubuntu 虚拟机（`ssh ubuntu@172.16.255.133`）：
 ## 下一步（按顺序）
 
 1. **等用户决定**：
-   - 是否把 M0、M1 分两个 commit 提交。不要自行 commit 或 push。
+   - 是否提交并推送 M2。不要自行 commit 或 push。
    - 是否把虚拟机第二块网卡从 host-only 改成 NAT 或桥接（改了才能完整验收 2.4），以及是否再加 2 台 Worker（4.2 和 7.1 要 3 台）。
 2. **用户加了虚拟机后**：用 `install-worker.sh -m <manager>:50051 -u ubuntu <ip...>` 部署，补测 M0 4.2 和 M1 7.1。每台都要先跑 `check-worker-host.sh`，再配策略路由。
-3. **M2 规划**：用 openspec-propose 流程生成 `m2-cpustat-kmod`。内容按开发文档“内核模块 cpustat”和“Worker 读 CPU”两节：
-   - `kmod/cpustat/` 下的 `cpustat.c` 和 `cpustat_uapi.h`
-   - vmalloc_user 共享页、hrtimer 软中断刷新、seqlock、ioctl 改周期
-   - Worker 新增 `ShmCpuSource` 实现 `CpuSource`，接口 M1 已经预留好
-   - 读取耗时基准：比 `/proc/stat` 低 85% 以上
-   - 加载卸载 1000 次，开 kmemleak
-
-   内核模块只能在虚拟机上编译测试，虚拟机内核是 6.8.0-149 aarch64，需要先装 `linux-headers-$(uname -r)`。
-4. **之后按里程碑表推进**：M3 eBPF、M4 多网卡……
+3. **M3 规划**：用 openspec-propose 生成 `m3-ebpf-runqlat`。内容按开发文档“eBPF 调度延迟”一节：libbpf + CO-RE、`tp_btf` 跟踪点、直方图与丢弃计数，验收是与 bcc `runqlat` 的分布接近。虚拟机已有 BTF 和 bpftool。
+4. **之后按里程碑表推进**：M4 多网卡、M5 调度……
 
 ## 注意事项
 
 - **定时任务**：无人值守运行时会卡在权限确认上。下次设定时任务前，先提醒用户在应用里给任务设置权限模式，或者先点一次“Run now”把要用的命令批准掉。
 - 用户习惯：中文、简短、异步。能自己决定的就决定，把决定写进 design.md 后汇报，不要因为小问题停下来等。
+- **虚拟机计时器**：arm64 计时器一跳约 41 ns，测纳秒级耗时要分批计时（见 m2 design 第 11 节）。
+- **后台命令里的 `wait`**：脚本里有后台 stress 时，`wait` 会连它一起等，导致卡住。要用 `wait <pid>`。
 - **macOS 上的命令**：zsh 不会把 `$VAR` 按空格拆成多个参数，需要多个参数时用 bash 脚本文件。
 - **docker exec 吃标准输入**：在 heredoc 里调用 `docker exec` 会读走后面的脚本，要加 `</dev/null` 或改用脚本文件。
 - **清理测试容器**：`lmtest-*` 系列容器、卷、网络用完都要删掉。用户自己的 compose 项目名是 `lm`，不要动。

@@ -10,8 +10,9 @@
 #   --force-config  覆盖目标机上已有的 /etc/lm/worker.yaml（默认保留）
 #
 # 目标机上：安装运行时库，创建系统用户 lm，二进制装到 /opt/lm/bin/worker，
-# 部署脚本装到 /opt/lm/deploy，配置在 /etc/lm/worker.yaml（node_id 留空 = 主机名），
-# 启用并重启 lm-worker.service。
+# 部署脚本装到 /opt/lm/deploy，配置在 /etc/lm/worker.yaml（node_id 留空 = 主机名）；
+# 在目标机上按当前内核编译 cpustat 模块，装到 /lib/modules/$(uname -r)/extra 并设为开机加载，
+# 装 udev 规则让 lm 组可读 /dev/cpustat；最后启用并重启 lm-worker.service。
 
 # shellcheck disable=SC2029  # ssh 命令里的变量都是有意在本地展开的
 set -euo pipefail
@@ -25,6 +26,7 @@ SSH_USER="${USER:-}"
 FORCE_CONFIG=0
 HOSTS=()
 
+BUILD_PKGS="build-essential"
 RUNTIME_PKGS="libgrpc++1.51t64 libgrpc29t64 libprotobuf32t64 libabsl20220623t64 libre2-10 libcares2 libspdlog1.12 libfmt9 libyaml-cpp0.8 libssl3t64 zlib1g"
 
 die() { echo "错误：$*" >&2; exit 1; }
@@ -69,6 +71,7 @@ manager_addr: ${MANAGER}
 collect_interval_ms: 1000
 report_interval_ms: 1000
 report_deadline_ms: 500
+cpu_source: auto               # auto：有 /dev/cpustat 用共享页，否则回退 /proc/stat
 log_level: info
 EOF
 )"
@@ -82,12 +85,15 @@ install_one() {
   [[ "$remote_arch" == "$BIN_ARCH" ]] ||
     { echo "    跳过：目标机架构 ${remote_arch} 与二进制 ${BIN_ARCH} 不一致" >&2; return 1; }
 
-  ssh "$target" "rm -rf ${stage} && mkdir -p ${stage}/deploy/systemd"
+  ssh "$target" "rm -rf ${stage} && mkdir -p ${stage}/deploy/systemd ${stage}/deploy/udev ${stage}/kmod/cpustat"
   scp -q "$BINARY" "${target}:${stage}/worker"
   scp -q "${SCRIPT_DIR}/check-worker-host.sh" "${SCRIPT_DIR}/policy-route.sh" \
       "${SCRIPT_DIR}/policy-route.conf.example" "${target}:${stage}/deploy/"
   scp -q "${SCRIPT_DIR}/systemd/lm-worker.service" "${SCRIPT_DIR}/systemd/lm-policy-route.service" \
       "${target}:${stage}/deploy/systemd/"
+  scp -q "${SCRIPT_DIR}/udev/99-cpustat.rules" "${target}:${stage}/deploy/udev/"
+  scp -q "${REPO_DIR}/kmod/cpustat/cpustat.c" "${REPO_DIR}/kmod/cpustat/cpustat_uapi.h" \
+      "${REPO_DIR}/kmod/cpustat/Makefile" "${target}:${stage}/kmod/cpustat/"
   printf '%s\n' "$WORKER_YAML" | ssh "$target" "cat > ${stage}/worker.yaml"
 
   # shellcheck disable=SC2087  # 变量有意在本地展开
@@ -95,8 +101,26 @@ install_one() {
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq ${RUNTIME_PKGS} >/dev/null
+apt-get install -y -qq ${RUNTIME_PKGS} ${BUILD_PKGS} "linux-headers-\$(uname -r)" >/dev/null
 id lm >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin lm
+
+# cpustat 内核模块：按目标机当前内核编译并安装，开机自动加载
+install -d -m 755 /opt/lm/kmod/cpustat
+install -m 644 ${stage}/kmod/cpustat/* /opt/lm/kmod/cpustat/
+make -s -C /opt/lm/kmod/cpustat >/dev/null
+install -d -m 755 "/lib/modules/\$(uname -r)/extra"
+install -m 644 /opt/lm/kmod/cpustat/cpustat.ko "/lib/modules/\$(uname -r)/extra/cpustat.ko"
+depmod -a
+echo cpustat > /etc/modules-load.d/cpustat.conf
+install -m 644 ${stage}/deploy/udev/99-cpustat.rules /etc/udev/rules.d/99-cpustat.rules
+udevadm control --reload
+# 重新加载以使用新编译的模块（Worker 正映射着时卸不掉，先停 Worker）
+systemctl stop lm-worker 2>/dev/null || true
+modprobe -r cpustat 2>/dev/null || true
+modprobe cpustat
+udevadm trigger --action=add --sysname-match=cpustat
+udevadm settle
+echo "    cpustat 已加载：\$(stat -c '%A %U:%G' /dev/cpustat) /dev/cpustat"
 install -d -m 755 /opt/lm/bin /opt/lm/deploy/systemd /etc/lm
 install -m 755 ${stage}/worker /opt/lm/bin/worker
 install -m 755 ${stage}/deploy/check-worker-host.sh ${stage}/deploy/policy-route.sh /opt/lm/deploy/

@@ -6,7 +6,7 @@
 
 Linux 服务器性能监控与调度系统。Worker 采集节点指标，Manager 给每台节点打分，把每个任务派给此刻最合适的节点。AI 服务负责异常诊断、运维问答、负载预测和日报，Web 看板实时展示。
 
-> 正在按里程碑重构，目前完成到 M1：/proc 采集 → 上报 → Manager → Redis 的链路已打通。进度见下文“里程碑”。
+> 正在按里程碑重构，目前完成到 M2：采集 → 上报 → Manager → Redis 的链路已打通，Worker 的 CPU 读数改由 cpustat 内核模块的共享页提供。进度见下文“里程碑”。
 
 ## 目标
 
@@ -33,8 +33,9 @@ Linux 服务器性能监控与调度系统。Worker 采集节点指标，Manager
 
 ```
 proto/        monitor.proto（上报）  task.proto（任务/探测）  advisor.proto（AI 预测）
-common/       环形缓冲、配置、日志
-worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  main.cpp
+kmod/cpustat/ 内核模块：定时把每核空闲时间写进只读共享页（/dev/cpustat）
+common/       环形缓冲、seqlock 读端、配置、日志
+worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  bench/（CPU 读取耗时基准）  main.cpp
 manager/      ingest/（接收上报、节点表）  storage/（Redis 热数据）  main.cpp
 tests/        GoogleTest 单元测试与 Redis 集成测试
 config/       worker.yaml、manager.yaml 样例
@@ -42,7 +43,7 @@ deploy/       docker-compose、MySQL 表结构、策略路由与自检脚本、s
 openspec/     需求规格与按里程碑划分的变更
 ```
 
-后续里程碑会加入 `kmod/`、`bpf/`、`ai/`、`web/`、`experiments/`。
+后续里程碑会加入 `bpf/`、`ai/`、`web/`、`experiments/`。
 
 ## 构建
 
@@ -122,15 +123,20 @@ deploy/install-worker.sh -m <manager_ip>:50051 -u ubuntu worker1 worker2 worker3
 
 安装脚本会做这些事：
 
-- 装好运行时库
+- 装好运行时库、编译工具和当前内核的头文件
+- 在目标机上编译 cpustat 内核模块，设为开机加载，并用 udev 规则让 `lm` 组可读 `/dev/cpustat`
 - 创建系统用户 `lm`
 - 写入 `/etc/lm/worker.yaml`，其中 `node_id` 留空，表示使用主机名
 - 用 systemd 启动 `lm-worker`
 
+Worker 的 `cpu_source` 默认是 `auto`：有 `/dev/cpustat` 就读共享页，没有（模块没加载、内核升级后没重编）就回退到 `/proc/stat` 并记一条警告。
+
 ### 单机调试
 
 ```bash
+make -C kmod/cpustat && sudo insmod kmod/cpustat/cpustat.ko   # 仅 Linux：编译并加载内核模块（可选）
 ./build/worker/worker -c config/worker.yaml --dry-run    # 不上报，每秒把样本以 JSON 打印出来
+./build/worker/cpu_read_bench                            # 对比共享页与 /proc/stat 的读取耗时
 LM_REDIS_PASSWORD=... ./build/manager/manager -c config/manager.yaml
 ```
 
@@ -146,9 +152,9 @@ redis-cli XREVRANGE stream:metrics + - COUNT 1            # 最近一秒所有�
 
 | 阶段 | 内容 | 状态 |
 |------|------|------|
-| M0 环境 | 双网卡策略路由、主机自检、Redis/MySQL 编排 | 脚本完成，待真实 Worker 验收 |
-| M1 骨架 | proto、/proc 采集、环形缓冲、上报、Manager 写 Redis | 代码完成，待真实 Worker 验收 |
-| M2 内核模块 | cpustat 共享页 + seqlock，替换 /proc 读 CPU | |
+| M0 环境 | 双网卡策略路由、主机自检、Redis/MySQL 编排 | 单台虚拟机验收完成；待第二块网卡能上外网、3 台 Worker |
+| M1 骨架 | proto、/proc 采集、环形缓冲、上报、Manager 写 Redis | 单台虚拟机验收完成；待 3 台 Worker |
+| M2 内核模块 | cpustat 共享页 + seqlock，替换 /proc 读 CPU | 虚拟机验收完成：读取耗时降低 99.8%，加载卸载 1000 次无泄漏 |
 | M3 eBPF | 调度延迟直方图 | |
 | M4 多网卡 | ICMP 探测、TCP 重传率、流量 | |
 | M5 调度 | 评分、剔除、概率选择、在途账、任务流程 | |

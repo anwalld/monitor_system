@@ -83,6 +83,17 @@ check_bpftool() {
   fi
 }
 
+check_headers() {
+  # 编译 cpustat 内核模块（M2）需要当前内核的头文件
+  local d
+  d="/lib/modules/$(uname -r)/build"
+  if [[ -d "$d" ]]; then
+    report headers OK "$d"
+  else
+    report headers FAIL "$d 不存在（apt install linux-headers-$(uname -r)）"
+  fi
+}
+
 check_nics() {
   # 除回环外、处于 UP 状态且有 IPv4 地址的网卡
   local nics=() name
@@ -101,6 +112,7 @@ check_kernel
 check_btf
 check_nohz
 check_bpftool
+check_headers
 check_nics
 
 exit "$failed"

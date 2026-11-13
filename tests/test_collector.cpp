@@ -17,12 +17,17 @@ class FakeCpu : public CpuSource {
       fail_next = false;
       return false;
     }
-    ++n_;
+    if (repeat_next) {
+      repeat_next = false;
+    } else {
+      ++n_;
+    }
     out.cores.clear();
     for (int i = 0; i < ncpu_; ++i) out.cores.push_back({static_cast<uint32_t>(i), n_ * 50, n_ * 100});
     return true;
   }
   bool fail_next = false;
+  bool repeat_next = false;  // 下一次返回与上次相同的读数（模拟读到同一次共享页刷新）
 
  private:
   int ncpu_;
@@ -46,6 +51,26 @@ TEST(Collector, FirstCollectIsBaselineThenSamples) {
   EXPECT_FLOAT_EQ(s.disk_util(), 0.2F);
   EXPECT_FALSE(s.has_runq_p99_us());  // M1 不上报调度延迟
   EXPECT_EQ(s.nics_size(), 0);
+}
+
+TEST(Collector, SameCpuDataStillPublishesWithLastBusy) {
+  SampleRing ring;
+  auto cpu = std::make_unique<FakeCpu>(2);
+  FakeCpu* raw = cpu.get();
+  Collector c("w1", std::move(cpu), {[] { return 0.6; }, [](int64_t) { return 0.2; }}, ring,
+              std::chrono::milliseconds(1000));
+  EXPECT_FALSE(c.collect_once());  // 基线
+  raw->repeat_next = true;
+  EXPECT_FALSE(c.collect_once());  // 基线后又是同一份数据，还没有可沿用的值
+  ASSERT_TRUE(c.collect_once());
+  raw->repeat_next = true;
+  ASSERT_TRUE(c.collect_once());  // 同一份数据：照常出样本
+  lm::Sample s;
+  ASSERT_TRUE(ring.take_latest(s));
+  EXPECT_EQ(s.seq(), 2U);
+  EXPECT_FLOAT_EQ(s.cpu_busy(), 0.5F);
+  EXPECT_EQ(s.core_busy_size(), 2);
+  EXPECT_EQ(c.samples_published(), 2U);
 }
 
 TEST(Collector, FailedReadKeepsLastValue) {

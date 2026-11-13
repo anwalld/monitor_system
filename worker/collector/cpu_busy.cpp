@@ -14,16 +14,24 @@ bool same_cpu_set(const CpuSnapshot& a, const CpuSnapshot& b) {
   return true;
 }
 
+bool same_totals(const CpuSnapshot& a, const CpuSnapshot& b) {
+  for (std::size_t i = 0; i < a.cores.size(); ++i) {
+    if (a.cores[i].total != b.cores[i].total) return false;
+  }
+  return true;
+}
+
 }  // namespace
 
-bool CpuBusyCalculator::update(const CpuSnapshot& snap, std::vector<float>& core_busy,
-                               float& cpu_busy) {
-  if (snap.cores.empty()) return false;
+BusyResult CpuBusyCalculator::update(const CpuSnapshot& snap, std::vector<float>& core_busy,
+                                     float& cpu_busy) {
+  if (snap.cores.empty()) return BusyResult::kBaseline;
   if (!has_prev_ || !same_cpu_set(prev_, snap)) {
     prev_ = snap;
     has_prev_ = true;
-    return false;
+    return BusyResult::kBaseline;
   }
+  if (same_totals(prev_, snap)) return BusyResult::kNoNewData;
 
   core_busy.assign(snap.cores.size(), 0.0F);
   double sum = 0.0;
@@ -43,7 +51,7 @@ bool CpuBusyCalculator::update(const CpuSnapshot& snap, std::vector<float>& core
   }
   cpu_busy = static_cast<float>(sum / static_cast<double>(snap.cores.size()));
   prev_ = snap;
-  return true;
+  return BusyResult::kUpdated;
 }
 
 }  // namespace lm::worker

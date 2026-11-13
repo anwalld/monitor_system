@@ -91,7 +91,21 @@ bool Collector::collect_once() {
   lm::Sample s;
   std::vector<float> core_busy;
   float cpu_busy = 0.0F;
-  if (!busy_.update(snap_, core_busy, cpu_busy)) return false;  // 首次只存基线
+  switch (busy_.update(snap_, core_busy, cpu_busy)) {
+    case BusyResult::kBaseline:
+      return false;  // 首次只存基线
+    case BusyResult::kNoNewData:
+      // 读到与上次相同的一份 CPU 数据：沿用上次的忙碌度照常出样本，保证每秒一条
+      if (!has_busy_) return false;
+      core_busy = last_core_busy_;
+      cpu_busy = last_cpu_busy_;
+      break;
+    case BusyResult::kUpdated:
+      last_core_busy_ = core_busy;
+      last_cpu_busy_ = cpu_busy;
+      has_busy_ = true;
+      break;
+  }
 
   s.set_node_id(node_id_);
   s.set_seq(seq_.load(std::memory_order_relaxed) + 1);

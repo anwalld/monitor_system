@@ -1,11 +1,11 @@
-# 部署与环境搭建（M0）
+# 部署与环境搭建（M0、M2）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
 | 角色 | 配置 | 本目录里用到的文件 |
 |------|------|------|
 | Manager 机 | 4 核 8 GB，Docker + Docker Compose v2 | `docker-compose.yml`、`.env.example`、`mysql/init.sql` |
-| Worker 机 | 2–4 核，2 块网卡，Ubuntu 24.04（内核 6.8） | `check-worker-host.sh`、`policy-route.sh`、`policy-route.conf.example`、`systemd/lm-policy-route.service` |
+| Worker 机 | 2–4 核，2 块网卡，Ubuntu 24.04（内核 6.8） | `check-worker-host.sh`、`policy-route.sh`、`policy-route.conf.example`、`systemd/lm-policy-route.service`、`udev/99-cpustat.rules`、`install-worker.sh` |
 
 ## Manager 机
 
@@ -83,7 +83,7 @@ docker compose down -v    # 停止并删除数据卷（数据全部丢失）
 
 ```bash
 sudo apt update
-sudo apt install -y iproute2 linux-tools-common linux-tools-$(uname -r) tcpdump
+sudo apt install -y iproute2 linux-tools-common linux-tools-$(uname -r) tcpdump build-essential linux-headers-$(uname -r)
 deploy/check-worker-host.sh
 ```
 
@@ -95,6 +95,7 @@ deploy/check-worker-host.sh
 | btf | 存在 `/sys/kernel/btf/vmlinux` | 换用开启 `CONFIG_DEBUG_INFO_BTF` 的内核 |
 | nohz | `CONFIG_NO_HZ_COMMON=y` | Ubuntu 默认内核已开启 |
 | bpftool | `bpftool btf dump` 有输出 | 安装 `linux-tools-$(uname -r)`；没有 CAP_BPF 时用 sudo 运行自检 |
+| headers | 存在 `/lib/modules/$(uname -r)/build` | 安装 `linux-headers-$(uname -r)`（编译 cpustat 模块用） |
 | nics | 至少 2 块 UP 且有 IPv4 地址的网卡 | 在虚拟化平台给虚拟机加第二块网卡 |
 
 ### 2. 多网卡策略路由
@@ -147,3 +148,32 @@ ping -c 3 8.8.8.8                                       # 普通出网，仍走�
 ip rule                                                 # 每块网卡一条 from 规则和一条 oif 规则
 sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c | head
 ```
+
+### 5. cpustat 内核模块（M2）
+
+`install-worker.sh` 会自动完成下面这些步骤，这里列出来便于手工排查。
+
+```bash
+make -C kmod/cpustat                                   # 编出 cpustat.ko
+sudo install -D -m 644 kmod/cpustat/cpustat.ko /lib/modules/$(uname -r)/extra/cpustat.ko
+sudo depmod -a
+echo cpustat | sudo tee /etc/modules-load.d/cpustat.conf   # 开机自动加载
+sudo cp deploy/udev/99-cpustat.rules /etc/udev/rules.d/ && sudo udevadm control --reload
+sudo modprobe cpustat
+ls -l /dev/cpustat                                     # 应为 cr--r----- root lm
+```
+
+- 模块加载后每秒刷新一次共享页。刷新周期可用模块参数修改，例如 `modprobe cpustat interval_us=100000`，最小 1000。
+- 只要有进程映射着 `/dev/cpustat`（比如 Worker 在运行），`rmmod` 就会失败。卸载前先 `systemctl stop lm-worker`。
+- 内核没开 NO_HZ 时模块拒绝加载，`dmesg` 里会写明原因。
+- **内核升级后**模块需要重编：重新运行 `install-worker.sh` 即可。没重编之前，Worker 会回退到 `/proc/stat`，日志里有警告。
+- **Secure Boot**：开启时内核会拒绝加载未签名的模块。可以用 MOK 给模块签名，或者在 `/etc/lm/worker.yaml` 里写 `cpu_source: proc`，不用模块。
+- **验收**：
+
+  ```bash
+  make -C kmod/cpustat test && sudo kmod/cpustat/test/cpustat_test   # 映射权限、周期修改、崩溃后恢复，全部 PASS
+  sudo modprobe -r cpustat && sudo kmod/cpustat/test/load_loop.sh     # 映射期间卸不掉、加载卸载 1000 次无泄漏
+  ./build-linux/worker/cpu_read_bench                                 # 共享页读取 P50 不超过 /proc/stat 的 15%
+  ```
+
+- **回滚**：`sudo modprobe -r cpustat && sudo rm /etc/modules-load.d/cpustat.conf`。Worker 会自动回退到 `/proc/stat`。

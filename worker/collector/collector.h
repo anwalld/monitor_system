@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "cpu_source.h"
 #include "lm/ring.h"
@@ -52,6 +53,9 @@ class Collector {
 
   CpuBusyCalculator busy_;
   CpuSnapshot snap_;
+  std::vector<float> last_core_busy_;
+  float last_cpu_busy_ = 0.0F;
+  bool has_busy_ = false;
   float last_mem_ = 0.0F;
   float last_disk_ = 0.0F;
   int mem_fails_ = 0;
