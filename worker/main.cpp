@@ -19,6 +19,7 @@
 #include "collector/proc_readers.h"
 #include "collector/runq_probe.h"
 #include "collector/shm_cpu_source.h"
+#include "netprobe/nic_monitor.h"
 #include "lm/clock.h"
 #include "lm/config.h"
 #include "lm/log.h"
@@ -104,6 +105,21 @@ int main(int argc, char** argv) {
     return 2;
   }
 
+  const std::string nic_mode = cfg.get<std::string>("nic_probe", "auto");
+  if (nic_mode != "auto" && nic_mode != "on" && nic_mode != "off") {
+    spdlog::critical("配置项 nic_probe 取值无效：{}（可选 auto、on、off）", nic_mode);
+    return 2;
+  }
+  lm::worker::NetProbeConfig net_cfg;
+  if (nic_mode != "off") {
+    try {
+      net_cfg = lm::worker::parse_net_config(cfg);
+    } catch (const lm::ConfigError& e) {
+      spdlog::critical("{}", e.what());
+      return 2;
+    }
+  }
+
   if (::access("/proc/stat", R_OK) != 0) {
     spdlog::critical("需要 Linux /proc（找不到 /proc/stat），worker 只能在 Linux 上运行");
     return 1;
@@ -141,6 +157,38 @@ int main(int argc, char** argv) {
     }
   }
 
+  // 网卡链路质量（ICMP 探测 + TCP 重传 + 流量）：auto 失败只警告、nics 留空；on 失败退出；off 不探测
+  std::shared_ptr<lm::worker::NicMonitor> nic_monitor;
+  if (nic_mode == "off") {
+    spdlog::info("网卡探测：未启用（配置 nic_probe=off）");
+  } else {
+    std::vector<lm::worker::NicSpec> nics = net_cfg.nics;
+    if (nics.empty()) {
+      std::vector<std::string> skipped;
+      nics = lm::worker::discover_nics(&skipped);
+      for (const auto& s : skipped) spdlog::warn("网卡 {} 不参与探测", s);
+    }
+    try {
+      nic_monitor = lm::worker::NicMonitor::create(net_cfg, nics);
+      std::string desc;
+      for (const auto& n : nics) {
+        if (!desc.empty()) desc += "；";
+        desc += n.name + " → ";
+        for (std::size_t i = 0; i < n.target_strs.size(); ++i) {
+          desc += (i ? ", " : "") + n.target_strs[i];
+        }
+      }
+      spdlog::info("网卡探测：{}（每 {}ms 一次，超时 {}ms）", desc, net_cfg.interval_ms,
+                   net_cfg.timeout_ms);
+    } catch (const std::exception& e) {
+      if (nic_mode == "on") {
+        spdlog::critical("nic_probe=on 但无法启用网卡探测：{}", e.what());
+        return 1;
+      }
+      spdlog::warn("网卡探测：未启用（{}），样本不含 nics", e.what());
+    }
+  }
+
   lm::worker::SampleRing ring;
   auto mem = std::make_shared<lm::worker::MemReader>();
   auto disk = std::make_shared<lm::worker::DiskReader>();
@@ -149,6 +197,9 @@ int main(int argc, char** argv) {
       [disk](int64_t now) { return disk->read_util(now); },
       nullptr,
   };
+  if (nic_monitor) {
+    readers.nics = [nic_monitor] { return nic_monitor->collect(); };
+  }
   if (runq) {
     auto window = std::make_shared<lm::worker::RunqWindow>();
     readers.runq = [runq, window] {

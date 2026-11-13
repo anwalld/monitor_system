@@ -6,4 +6,13 @@ report_interval_ms: 1000       # 上报周期
 report_deadline_ms: 500        # 每次上报的截止时间
 cpu_source: auto               # auto：有 /dev/cpustat 用共享页，否则回退 /proc/stat；shm：只用共享页；proc：只用 /proc/stat
 runq: auto                     # 调度延迟（eBPF）：auto 加载失败只警告；on 失败退出；off 不采集
+nic_probe: auto                # 网卡探测（ICMP + TCP 重传 + 流量）：auto 失败只警告；on 失败退出；off 不探测
+# net:                         # 不写 net.nics 时自动选择物理网卡，各以默认网关为目标
+#   probe_interval_ms: 200
+#   probe_timeout_ms: 1000
+#   nics:
+#     - name: ens160
+#       targets: [172.16.255.2, 8.8.8.8]
+#     - name: ens192
+#       targets: [172.16.13.1]
 log_level: info                # trace/debug/info/warn/error

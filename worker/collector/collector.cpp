@@ -101,6 +101,8 @@ bool Collector::collect_once() {
       disk_fails_);
 
   const std::optional<RunqStats> runq = read_runq();
+  std::vector<lm::NicStat> nics;
+  if (readers_.nics) nics = readers_.nics();
 
   if (!cpu_->read(snap_)) {
     // CPU 读不到就没有可用的忙碌度，本周期不出样本，也不破坏基线
@@ -140,6 +142,7 @@ bool Collector::collect_once() {
   for (float b : core_busy) s.add_core_busy(b);
   s.set_mem_avail_ratio(mem);
   s.set_disk_util(disk);
+  for (auto& n : nics) *s.add_nics() = std::move(n);
   if (runq) {
     s.set_runq_p50_us(runq->p50_us);
     s.set_runq_p99_us(runq->p99_us);

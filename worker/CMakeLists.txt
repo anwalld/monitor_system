@@ -14,13 +14,27 @@ if(LM_HAVE_BPF)
   target_link_libraries(lm_worker_collector PUBLIC lm_bpf_runqlat)
 endif()
 
+# 网卡链路质量（M4）：Linux 专用部分在源文件内按 __linux__ 编译，其他平台为桩
+add_library(lm_worker_netprobe STATIC
+  netprobe/nic_config.cpp
+  netprobe/route.cpp
+  netprobe/icmp.cpp
+  netprobe/probe_state.cpp
+  netprobe/prober.cpp
+  netprobe/retrans.cpp
+  netprobe/sock_diag.cpp
+  netprobe/traffic.cpp
+  netprobe/nic_monitor.cpp)
+target_include_directories(lm_worker_netprobe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/netprobe)
+target_link_libraries(lm_worker_netprobe PUBLIC lm_common lm_proto)
+
 add_library(lm_worker_reporter STATIC
   reporter/reporter.cpp)
 target_include_directories(lm_worker_reporter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_worker_reporter PUBLIC lm_common lm_proto)
 
 add_executable(worker main.cpp)
-target_link_libraries(worker PRIVATE lm_worker_collector lm_worker_reporter)
+target_link_libraries(worker PRIVATE lm_worker_collector lm_worker_reporter lm_worker_netprobe)
 
 # CPU 读取耗时基准（M2 验收）
 add_executable(cpu_read_bench bench/cpu_read_bench.cpp)

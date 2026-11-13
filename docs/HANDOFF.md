@@ -1,6 +1,6 @@
 # 交接文档
 
-更新时间：2026-11-13 14:20（UTC+8），M3 完成之后
+更新时间：2026-11-13 15:55（UTC+8），M4 完成之后
 
 ## 一句话现状
 
@@ -19,7 +19,12 @@
   - 拥挤验收：8 个线程挤在一个核上时，P99 从空闲的 87 µs 升到 22.5 ms。
   - 开销：Worker 空闲 60 秒只用 0.16 秒 CPU；`sched pipe` 极端场景下约慢 5%。
   - 归档顺序：先归档 M1，再归档 M3。
-- **提交状态**：M0、M1、M2 已提交并推送（a7fe517、b99badf、790061f）。M3 的改动还在工作区，没有 commit，提交前先问用户。
+- **M4**：15 项任务全部完成，虚拟机验收通过（`openspec/changes/m4-multi-nic/`）。
+  - ens192 注入 netem（丢包 10%、延迟 100ms）：RTT +100 ms、超时率 0.057、重传率 0.113；ens160 基本不变。
+  - 流量误差 0.03%；RTT 与 ping 相差 0.16 ms。
+  - 三项采集全开时，空闲 60 秒 Worker 只用 0.35 秒 CPU。
+  - 验收时在 Mac 上临时起过 TCP 接收端（172.16.13.1:18080），已停掉。
+- **提交状态**：M0–M3 已提交并推送（a7fe517、b99badf、790061f、1c64e22）。M4 的改动还在工作区，没有 commit，提交前先问用户。
 
 ## 2026-11-13 这次做了什么
 
@@ -38,7 +43,7 @@
 
 ### 虚拟机当前状态（保留着，方便继续测）
 
-- **systemd**：`lm-worker` 在运行（M3 版本：读 cpustat 共享页，eBPF 调度延迟已启用），二进制在 `/opt/lm/bin/worker`，配置在 `/etc/lm/worker.yaml`，`manager_addr` 是 `127.0.0.1:50051`。
+- **systemd**：`lm-worker` 在运行（M4 版本：读 cpustat 共享页，开着 eBPF 调度延迟和网卡探测）。`/etc/lm/worker.yaml` 末尾手工加了 `net.nics`：ens160 → 172.16.255.2、8.8.8.8；ens192 → 172.16.13.1，二进制在 `/opt/lm/bin/worker`，配置在 `/etc/lm/worker.yaml`，`manager_addr` 是 `127.0.0.1:50051`。
 - **cpustat 模块**：源码在 `/opt/lm/kmod/cpustat`，模块装在 `/lib/modules/6.8.0-149-generic/extra/`，由 `/etc/modules-load.d/cpustat.conf` 开机加载，udev 规则 `/etc/udev/rules.d/99-cpustat.rules`。
 - **docker compose**：项目 `lm` 在 `~/lm/deploy`（manager 镜像已更新为 M3 版本，会写 runq 字段），跑着 redis、mysql、manager。密码是随机生成的，在虚拟机的 `~/lm/deploy/.env` 里。
 - **已装的软件**：stress、fio、docker.io、docker-compose-v2、Worker 运行时库（含 libbpf1）、build-essential、linux-headers、bpfcc-tools（runqlat-bpfcc）、linux-tools（perf、bpftool）。
@@ -122,23 +127,23 @@ Ubuntu 虚拟机（`ssh ubuntu@172.16.255.133`）：
 ## 下一步（按顺序）
 
 1. **等用户决定**：
-   - 是否提交并推送 M3。不要自行 commit 或 push。
+   - 是否提交并推送 M4。不要自行 commit 或 push。
    - 是否把虚拟机第二块网卡从 host-only 改成 NAT 或桥接（改了才能完整验收 2.4），以及是否再加 2 台 Worker（4.2 和 7.1 要 3 台）。
 2. **用户加了虚拟机后**：用 `install-worker.sh -m <manager>:50051 -u ubuntu <ip...>` 部署，补测 M0 4.2 和 M1 7.1。每台都要先跑 `check-worker-host.sh`，再配策略路由。
-3. **M4 规划**：用 openspec-propose 生成 `m4-multi-nic`。内容按开发文档“多网卡链路质量”一节：
-   - 每块网卡 ICMP 探测：epoll + timerfd 线程，RTT、抖动、超时率。
-   - Netlink tcp_info 重传率。
-   - sysfs 收发流量。
-   - 填 `Sample.nics`。
-   - 验收：netem 注入后只有对应网卡的指标变差。
-   - 注意：虚拟机的 ens192 是 host-only，连不了外网，探测目标可以用网关 172.16.13.1。
-4. **之后按里程碑表推进**：M5 调度、M6 节点状态机……
+3. **M5 规划**（调度）：用 openspec-propose 生成 `m5-scheduling`。内容按开发文档“Manager 实现”里的评分、剔除、选择、在途任务账，以及 task.proto 的 Scheduler/WorkerTask 和压测客户端。这是最大的一个里程碑，可能需要拆成两个变更：
+   - 评分、剔除、选择。
+   - 任务流程与在途账，加上 Worker 的 WorkerTask 服务。
+
+   验收：单元测试全过；本地负载出现时任务自动转移。
+4. **之后按里程碑表推进**：M6 节点状态机、M7 存储与看板……
 
 ## 注意事项
 
 - **定时任务**：无人值守运行时会卡在权限确认上。下次设定时任务前，先提醒用户在应用里给任务设置权限模式，或者先点一次“Run now”把要用的命令批准掉。
 - 用户习惯：中文、简短、异步。能自己决定的就决定，把决定写进 design.md 后汇报，不要因为小问题停下来等。
 - **虚拟机计时器**：arm64 计时器一跳约 41 ns，测纳秒级耗时要分批计时（见 m2 design 第 11 节）。
+- **8.8.8.8 经 NAT 约丢 11%**：作为探测目标时有固定的超时率，判断网卡是否劣化要看变化量。
+- **proto JSON 的 uint64 是字符串**：`rx_bps`、`tx_bps` 等字段要转数字再算。
 - **worker 日志在 stderr**：M3 起所有组件的日志写 stderr，`--dry-run` 的 stdout 是纯 JSON。
 - **后台命令里的 `wait`**：脚本里有后台 stress 时，`wait` 会连它一起等，导致卡住。要用 `wait <pid>`。
 - **macOS 上的命令**：zsh 不会把 `$VAR` 按空格拆成多个参数，需要多个参数时用 bash 脚本文件。

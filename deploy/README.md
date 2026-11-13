@@ -1,4 +1,4 @@
-# 部署与环境搭建（M0、M2、M3）
+# 部署与环境搭建（M0、M2–M4）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
@@ -197,3 +197,38 @@ Worker 启动时加载 `bpf/runqlat.bpf.c` 编出的程序（已嵌进 Worker �
   ```
 
 - **回滚**：配置里写 `runq: off` 后 `systemctl restart lm-worker`。Manager 在下一条样本时删掉 Redis 中的调度延迟字段。
+
+### 7. 多网卡链路质量（M4）
+
+Worker 的探测线程给每块网卡开一个绑定该网卡（`SO_BINDTODEVICE`）的原始 ICMP socket，每 200ms 向配置的目标发一次回显请求，超过 1 秒没回算超时。每秒上报每块网卡的 RTT 均值、RTT 标准差、超时率、TCP 重传率和收发流量（比特每秒）。
+
+- **条件**：
+  - `CAP_NET_RAW`（`lm-worker.service` 已授予）。
+  - 第二块网卡要先按第 2 步配好策略路由，否则绑定它发往非直连目标的报文无路可走，会显示为超时率 1。
+- **配置**（`/etc/lm/worker.yaml`，每块网卡 1–3 个 IPv4 目标，样本里的顺序与这里一致）：
+
+  ```yaml
+  nic_probe: auto          # auto：失败只警告、nics 留空；on：失败退出；off：不探测
+  net:
+    probe_interval_ms: 200
+    probe_timeout_ms: 1000
+    nics:
+      - name: ens160
+        targets: [172.16.255.2, 8.8.8.8]
+      - name: ens192
+        targets: [172.16.13.1]
+  ```
+
+  不写 `net.nics` 时自动选择物理网卡（`/sys/class/net/<名>/device` 存在），各自以任一路由表里的默认网关为目标。没有默认网关的网卡会被跳过，并记一条警告。
+- **目标的选择**：公网地址（如 8.8.8.8）经 NAT 时可能有固定丢包（实测约 11%）。只关心本机出口时，用网关地址作为目标更稳定。
+- **确认生效**：`journalctl -u lm-worker | grep 网卡探测`，应能看到每块网卡及其目标。
+- **验收**（弱网只影响对应网卡）：
+
+  ```bash
+  sudo systemd-run --on-active=5min tc qdisc del dev ens192 root   # 保险：5 分钟后自动撤销
+  sudo tc qdisc add dev ens192 root netem loss 10% delay 100ms
+  sudo /opt/lm/bin/worker -c /etc/lm/worker.yaml --dry-run          # 看 nics 里 ens192 的 rtt_ms、timeout_rate 上升，ens160 不变
+  sudo tc qdisc del dev ens192 root
+  ```
+
+- **回滚**：配置里写 `nic_probe: off`，然后 `systemctl restart lm-worker`。

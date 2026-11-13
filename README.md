@@ -6,7 +6,7 @@
 
 Linux 服务器性能监控与调度系统。Worker 采集节点指标，Manager 给每台节点打分，把每个任务派给此刻最合适的节点。AI 服务负责异常诊断、运维问答、负载预测和日报，Web 看板实时展示。
 
-> 正在按里程碑重构，目前完成到 M3：采集 → 上报 → Manager → Redis 的链路已打通，CPU 读数来自 cpustat 内核模块的共享页，调度延迟由 eBPF 测量。进度见下文“里程碑”。
+> 正在按里程碑重构，目前完成到 M4：采集 → 上报 → Manager → Redis 的链路已打通，CPU 读数来自 cpustat 内核模块的共享页，调度延迟由 eBPF 测量，每块网卡单独测链路质量和流量。进度见下文“里程碑”。
 
 ## 目标
 
@@ -36,7 +36,7 @@ proto/        monitor.proto（上报）  task.proto（任务/探测）  advisor.
 kmod/cpustat/ 内核模块：定时把每核空闲时间写进只读共享页（/dev/cpustat）
 bpf/          eBPF 程序：runqlat.bpf.c（调度排队延迟直方图），构建时生成 vmlinux.h 和 skeleton
 common/       环形缓冲、seqlock 读端、配置、日志
-worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  bench/（CPU 读取耗时基准、调度延迟对照工具）  main.cpp
+worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  netprobe/（多网卡 ICMP 探测、TCP 重传率、流量）  bench/（CPU 读取耗时基准、调度延迟对照工具）  main.cpp
 manager/      ingest/（接收上报、节点表）  storage/（Redis 热数据）  main.cpp
 tests/        GoogleTest 单元测试与 Redis 集成测试
 config/       worker.yaml、manager.yaml 样例
@@ -136,6 +136,8 @@ deploy/install-worker.sh -m <manager_ip>:50051 -u ubuntu worker1 worker2 worker3
 
 Worker 的 `runq` 默认是 `auto`：能加载 eBPF 程序就每秒上报调度延迟 P50、P99 和丢弃率，加载不了（缺 BTF、缺 CAP_BPF）就只记一条警告，样本里不带这三个字段。
 
+Worker 的 `nic_probe` 默认是 `auto`：每块网卡用绑定该网卡的原始 ICMP socket 每 200ms 探测一次目标，加上按网卡归类的 TCP 重传率和流量，填进样本的 `nics`。目标在 `net.nics` 里配置（见 `config/worker.yaml`），不配时自动选物理网卡并以默认网关为目标。缺少 CAP_NET_RAW 时只警告，`nics` 留空。
+
 Worker 的 `cpu_source` 默认是 `auto`：有 `/dev/cpustat` 就读共享页，没有（模块没加载、内核升级后没重编）就回退到 `/proc/stat` 并记一条警告。
 
 ### 单机调试
@@ -163,7 +165,7 @@ redis-cli XREVRANGE stream:metrics + - COUNT 1            # 最近一秒所有�
 | M1 骨架 | proto、/proc 采集、环形缓冲、上报、Manager 写 Redis | 单台虚拟机验收完成；待 3 台 Worker |
 | M2 内核模块 | cpustat 共享页 + seqlock，替换 /proc 读 CPU | 虚拟机验收完成：读取耗时降低 99.8%，加载卸载 1000 次无泄漏 |
 | M3 eBPF | 调度延迟直方图 | 虚拟机验收完成：与 bcc runqlat 分布距离 0.04，单核拥挤时 P99 升高约 258 倍 |
-| M4 多网卡 | ICMP 探测、TCP 重传率、流量 | |
+| M4 多网卡 | ICMP 探测、TCP 重传率、流量 | 虚拟机验收完成：netem 弱网只让对应网卡变差（RTT +100ms、重传 11%），另一块不受影响 |
 | M5 调度 | 评分、剔除、概率选择、在途账、任务流程 | |
 | M6 节点状态机 | 熔断、急救、慢启动、退避 | |
 | M7 存储与看板 | MySQL 冷数据、REST/WebSocket、Vue 看板 | |

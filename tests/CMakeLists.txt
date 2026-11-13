@@ -39,6 +39,9 @@ target_link_libraries(test_common PRIVATE lm_common)
 
 lm_add_test(test_worker test_cpu_busy.cpp test_proc_readers.cpp test_collector.cpp test_shm_cpu_source.cpp test_runq_histogram.cpp)
 target_link_libraries(test_worker PRIVATE lm_worker_collector)
+lm_add_test(test_netprobe test_netprobe.cpp)
+target_link_libraries(test_netprobe PRIVATE lm_worker_netprobe lm_worker_collector)
+
 target_compile_definitions(test_worker PRIVATE LM_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures")
 
 if(LM_BUILD_MANAGER)

@@ -26,6 +26,9 @@ class Config {
 
   bool has(const std::string& key) const { return find(key).IsDefined(); }
 
+  // 取原始节点（如列表、映射），不存在时返回 Undefined 节点。
+  YAML::Node node(const std::string& key) const { return find(key); }
+
   template <typename T>
   T get(const std::string& key, const T& fallback) const {
     YAML::Node node = find(key);

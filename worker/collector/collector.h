@@ -1,7 +1,7 @@
 #pragma once
 
 // 采集线程：按固定周期采一次 CPU、内存、磁盘，组装 Sample 写入环形缓冲。
-// 调度延迟由可选的 runq 读取函数提供（M3）；网卡（M4）字段暂不填。
+// 调度延迟由可选的 runq 读取函数提供（M3），网卡链路质量由可选的 nics 读取函数提供（M4）。
 
 #include <atomic>
 #include <chrono>
@@ -34,6 +34,7 @@ struct MetricReaders {
   std::function<std::optional<double>()> mem_avail_ratio;
   std::function<std::optional<double>(int64_t now_mono_ms)> disk_util;
   std::function<RunqResult()> runq;
+  std::function<std::vector<lm::NicStat>()> nics;  // 为空或返回空向量时 nics 不填
 };
 
 class Collector {
