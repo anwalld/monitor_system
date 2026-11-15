@@ -17,6 +17,8 @@ const statusColor = computed(() => ({
     <nav>
       <router-link to="/">总览</router-link>
       <router-link to="/events">事件</router-link>
+      <router-link to="/diagnoses">诊断</router-link>
+      <router-link to="/settings">设置</router-link>
     </nav>
     <span class="spacer"></span>
     <span class="conn" :title="`连接次数 ${live.connects}，最新事件 ${live.lastEventId || '-'}`">

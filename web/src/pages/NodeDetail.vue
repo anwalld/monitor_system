@@ -1,8 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import Chart from "../components/Chart.vue";
-import { api, live, onEvent, idLess } from "../live.js";
-import { pct, num, us, datetime, time, STATE_LABEL, KIND_LABEL, eventSummary } from "../fmt.js";
+import DiagDetail from "../components/DiagDetail.vue";
+import { api, aiDown, live, onEvent, idLess } from "../live.js";
+import { pct, num, us, datetime, time, STATE_LABEL, KIND_LABEL, SEV_LABEL, eventSummary } from "../fmt.js";
 
 const props = defineProps({ id: String });
 const points = ref([]);
@@ -26,14 +27,29 @@ async function loadEvents() {
   } catch {}
 }
 
+// 相关诊断（AI 服务，最近 24 小时）
+const diags = ref([]);
+const diagErr = ref("");
+const openDiag = ref(null);
+async function loadDiags() {
+  try {
+    diags.value = (await api(`/api/ai/diagnoses?node=${encodeURIComponent(props.id)}&hours=24&limit=50`)).diagnoses;
+    diagErr.value = "";
+  } catch (e) {
+    diagErr.value = aiDown(e) ? "AI 服务不可用" : `加载失败：${e.message}`;
+  }
+}
+
 let timer = null;
 let off = null;
 onMounted(() => {
   loadSeries();
   loadEvents();
+  loadDiags();
   timer = setInterval(loadSeries, 10000);
   off = onEvent((e) => {
     if (e.node === props.id && !events.value.some((x) => x.id === e.id)) events.value.unshift(e);
+    if (e.node === props.id && e.kind === "diagnosis") setTimeout(loadDiags, 300);
   });
 });
 onBeforeUnmount(() => {
@@ -43,8 +59,10 @@ onBeforeUnmount(() => {
 watch(() => props.id, () => {
   points.value = [];
   events.value = [];
+  diags.value = [];
   loadSeries();
   loadEvents();
+  loadDiags();
 });
 
 const s = (k, scale = 1) => points.value.map((p) => [p.ts, p[k] == null ? null : p[k] * scale]);
@@ -110,6 +128,25 @@ const pctFmt = (v) => `${Math.round(v * 100)}%`;
     <Chart title="调度延迟 P99（桶内最大）" :series="runqSeries" :y-axes="[{ name: 'µs' }]" />
     <Chart title="网卡（各网卡平均）" :series="netSeries" :y-axes="[{ name: 'ms' }, { name: '比例', max: 1 }]" />
     <Chart title="流量（Mbit/s，各网卡之和）" :series="trafficSeries" :y-axes="[{ name: 'Mbit/s' }]" />
+  </div>
+
+  <div class="card" style="margin-bottom: 14px">
+    <h3>相关诊断（最近 24 小时）</h3>
+    <div v-if="diagErr" class="muted">{{ diagErr }}</div>
+    <div v-else-if="!diags.length" class="empty">暂无诊断</div>
+    <table v-else>
+      <tbody>
+        <template v-for="d in diags" :key="d.id">
+          <tr class="click" @click="openDiag = openDiag === d.id ? null : d.id">
+            <td class="num">{{ datetime(d.ts) }}</td>
+            <td><span class="badge" :class="`sev-${d.severity}`">{{ SEV_LABEL[d.severity] || d.severity }}</span></td>
+            <td>{{ d.summary }}</td>
+            <td class="muted">{{ d.label || d.metric }}</td>
+          </tr>
+          <tr v-if="openDiag === d.id"><td colspan="4"><DiagDetail :id="d.id" /></td></tr>
+        </template>
+      </tbody>
+    </table>
   </div>
 
   <div class="card">

@@ -38,8 +38,9 @@ bpf/          eBPF 程序：runqlat.bpf.c（调度排队延迟直方图），构
 common/       环形缓冲、seqlock 读端、配置、日志
 worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  netprobe/（多网卡 ICMP 探测、TCP 重传率、流量）  task/（任务执行服务）  bench/（CPU 读取耗时基准、调度延迟对照工具）  main.cpp
 manager/      ingest/（接收上报、节点表）  scoring/（评分、剔除、加权抽样）  inflight/（在途任务账）  breaker/（节点状态机、低频探测、急救）  api/（Scheduler 服务、看板 REST/WebSocket）  scheduler_loop（100 ms 主循环）  storage/（Redis 热数据、事件流、MySQL 冷数据）  main.cpp
-web/          Vue 3 + Vite + ECharts 看板（总览、节点详情、事件）
-experiments/  lm-bench：调试与压测客户端（allocate、submit）；ws_check.mjs：看板断线重连验收
+ai/           AI 服务（Python 3.11、FastAPI）：lmai/（检测、诊断、LLM 接入、接口）  tests/（pytest）
+web/          Vue 3 + Vite + ECharts 看板（总览、节点详情、事件、诊断、设置）
+experiments/  lm-bench：调试与压测客户端（allocate、submit）；ws_check.mjs：看板断线重连验收；ai_faults.sh、ai_eval.py：AI 检测的故障注入与评估；mock_llm.py：模拟 OpenAI 兼容接口
 tests/        GoogleTest 单元测试与 Redis、MySQL 集成测试
 config/       worker.yaml、manager.yaml 样例
 deploy/       docker-compose、MySQL 表结构、策略路由与自检脚本、systemd、安装脚本
@@ -114,7 +115,7 @@ cp .env.example .env      # 填写三个密码
 docker compose up -d --build --wait
 ```
 
-compose 会启动 Redis、MySQL、Manager 和 Nginx。Manager 用 host 网络，gRPC 监听 50051，看板接口监听 8080；Nginx 监听 80（`HTTP_PORT`），浏览器打开 `http://<manager_ip>/` 就是看板。`.env` 里设了 `API_TOKEN` 时，第一次打开 `http://<manager_ip>/#/?token=<API_TOKEN>`，之后浏览器会记住。
+compose 会启动 Redis、MySQL、Manager、AI 服务和 Nginx。Manager 用 host 网络，gRPC 监听 50051，看板接口监听 8080；AI 服务只监听 127.0.0.1:8000；Nginx 监听 80（`HTTP_PORT`），浏览器打开 `http://<manager_ip>/` 就是看板。`.env` 里设了 `API_TOKEN` 时，第一次打开 `http://<manager_ip>/#/?token=<API_TOKEN>`，之后浏览器会记住。
 
 ### Worker 机
 
@@ -204,6 +205,24 @@ Manager 另起一个 MySQL 写线程，MySQL 挂掉不影响调度和 Redis：
 
 事件种类：`slow_start`（新节点 / 剔除后 / 急救后）、`normal`、`evict`、`rescue_start`、`rescue_end`，写入 `stream:events`（MAXLEN 约 1 万）。
 
+### AI 诊断（M8）
+
+AI 服务是独立进程，只读 Redis 和 MySQL，写 `ai_diagnosis` 和 `stream:events` 里的 `diagnosis` 事件。停掉它不影响调度。
+
+- **检测**（每秒，纯统计）：每台节点每个指标（CPU、调度延迟 P99、可用内存、磁盘、各网卡 RTT/超时率/重传率）保留 10 分钟窗口，稳健 z 分数 |z| > 4 连续 3 个点算异常，只看变坏的方向；调度延迟丢弃率 > 1%、网卡超时率 > 20%（10 秒平均）、`evict`、`rescue_start` 直接算异常。同一节点 10 分钟只诊断一次，严重度升级除外。
+- **诊断**：把异常、最近 10 分钟指标（每 10 秒一个点）、状态转移、任务超时、其他节点中位数交给 LLM，按 JSON schema 输出（severity、summary、causes、actions），pydantic 校验，不合格重试一次。诊断只给建议，不执行任何操作。
+- **LLM**：OpenAI 兼容接口，厂商和模型列在 `config/ai.yaml`（DeepSeek、通义千问），在看板“设置”页选择；API Key 直接在设置页填写（存 Redis `ai:keys`，不回显），或放 `deploy/.env`，设置页填的优先。没选厂商、缺 Key、超出每日 token 预算（默认 100 万）或调用失败时，诊断只含统计结果。
+
+| 接口（经 Nginx `/api/ai/`） | 内容 |
+|------|------|
+| `GET /api/ai/health` | 不鉴权：Redis/MySQL 状态、LLM 是否启用、当日 token、检测节点数、队列 |
+| `GET /api/ai/diagnoses?node=&severity=&hours=24&limit=100` | 诊断列表，新的在前 |
+| `GET /api/ai/diagnoses/{id}` | 一条诊断的全部内容（含发给模型的上下文） |
+| `GET /api/ai/anomalies?since_ms=` | 内存里最近 1000 个检测器异常（含被去重的），评估用 |
+| `GET`/`PUT /api/ai/settings` | 可选厂商与模型、Key 是否已配置（只返回来源和末 4 位）；PUT `{"vendor","model","api_key"?,"clear_key"?}`，vendor 为空表示不启用 |
+
+开发：`docker build -f deploy/docker/ai.Dockerfile -t lm-ai . && docker run --rm lm-ai python -m pytest -q`；本机联调用 `python3 experiments/mock_llm.py` 模拟 LLM。看板开发时 `VITE_AI` 指向 AI 服务（默认 `http://127.0.0.1:8000`）。
+
 ### 查看数据
 
 ```bash
@@ -225,7 +244,8 @@ redis-cli XREVRANGE stream:events + - COUNT 10            # 最近 10 条事件
 | M5 调度 | 评分、剔除、概率选择、在途账、任务流程、压测客户端 | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：本地 stress 打满时该节点任务占比从约 60% 降到 0，结束后 10 秒内回升，2464 个任务无失败；待 3 台 Worker 重做 |
 | M6 节点状态机 | 熔断、急救、慢启动、退避、低频探测 | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：进程停止 2.7 秒剔除不急救；恢复后进入慢启动、5 分钟回到正常；丢 50052 端口的包 2.9 秒剔除；执行超时触发自动急救，2.2 秒恢复；间歇故障时急救 0.5 秒内发现并结束 |
 | M7 存储与看板 | 事件流、MySQL 冷数据、REST/WebSocket、Vue 看板、Nginx | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：每节点每 5 分钟一行（300 样本），超时后迟到的完成改为 done；MySQL 断开 70 秒调度不受影响、恢复后一行不少；看板断线和 Manager 重启后事件不丢不重 |
-| M8–M9 AI | 异常诊断、运维问答、负载预测、日报 | |
+| M8 AI 第一批 | 异常检测、LLM 诊断、诊断页与设置页（BYOK） | 验收完成（虚拟机 + Mac 测试节点）：16 次注入全部检出，延迟 2.5–5 秒；DeepSeek 诊断 JSON 全部合格；停 AI、阻断 MySQL 时调度 0 失败 |
+| M9 AI 第二批 | 运维问答（MCP）、负载预测、日报 | |
 | M10 对照实验 | 与轮询、加权轮询对比 | |
 
 每个里程碑对应 `openspec/changes/` 下的一个变更，开发流程见 [OpenSpec](https://github.com/Fission-AI/OpenSpec)。

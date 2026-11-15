@@ -44,7 +44,10 @@ const shown = computed(() =>
           <td class="num">{{ datetime(e.ts) }}</td>
           <td><router-link :to="`/nodes/${encodeURIComponent(e.node)}`">{{ e.node }}</router-link></td>
           <td :class="`k-${e.kind}`">{{ KIND_LABEL[e.kind] || e.kind }}</td>
-          <td>{{ eventSummary(e) }}</td>
+          <td>
+            <router-link v-if="e.kind === 'diagnosis' && e.detail.diag_id" :to="`/diagnoses?id=${e.detail.diag_id}&node=${encodeURIComponent(e.node)}`">{{ eventSummary(e) }}</router-link>
+            <template v-else>{{ eventSummary(e) }}</template>
+          </td>
           <td class="muted num">{{ e.id }}</td>
         </tr>
       </tbody>

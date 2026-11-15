@@ -6,3 +6,6 @@ cmake-build-*/
 deploy/.env
 web/node_modules/
 web/dist/
+__pycache__/
+.pytest_cache/
+ai/**/__pycache__/

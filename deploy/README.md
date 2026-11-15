@@ -1,4 +1,4 @@
-# 部署与环境搭建（M0–M7）
+# 部署与环境搭建（M0–M8）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
@@ -138,6 +138,25 @@ docker compose logs manager | grep 'MySQL'   # 每 10 秒汇总里有 MySQL 写�
 ```
 
 回滚：`docker tag lm-manager:m6 lm-manager && docker compose up -d --no-build manager`，再 `docker compose stop nginx`。
+
+### 7. AI 服务（M8）
+
+compose 新增 `ai` 服务（镜像 `lm-ai`，`deploy/docker/ai.Dockerfile`），host 网络，只监听 `127.0.0.1:${AI_PORT:-8000}`；Nginx 把 `/api/ai/` 反代过去（`AI_HTTP`）。`.env` 新增：
+
+- `DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`：可选。也可以不写在这里，直接在看板“设置”页填 Key（存 Redis `ai:keys`，设置页填的优先）。在设置页选厂商和模型（选择存 Redis `ai:settings`，下一次诊断生效）。都不填时只做统计检测，诊断里只有代码算出的结论。
+- `AI_PORT`：默认 8000。
+
+```bash
+docker build -f deploy/docker/ai.Dockerfile -t lm-ai .
+docker build -f deploy/docker/web.Dockerfile -t lm-web .
+docker save lm-ai lm-web | gzip -1 | ssh <user>@<manager机> 'gunzip | sudo docker load'
+docker compose up -d --no-build ai nginx
+curl -s http://127.0.0.1/api/ai/health
+```
+
+Redis 里新增 consumer group `ai`（`stream:metrics`、`stream:events` 上）、`ai:settings`、`ai:keys`、`ai:tokens:<日期>`。回滚：`docker compose stop ai`（调度不受影响，看板诊断页和设置页显示“AI 服务不可用”）。
+
+验收工具：`experiments/ai_faults.sh`（在 Worker 上依次注入 CPU、调度延迟、内存、磁盘、网卡、进程停止，记录起止时刻）+ `experiments/ai_eval.py`（检出率、检出延迟、每小时误报）。
 
 ### 停止与清理
 

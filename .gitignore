@@ -52,3 +52,7 @@ worker/src/ebpf/test_net_ebpf
 deploy/.env
 deploy/policy-route.conf
 build-*/
+
+# Python
+__pycache__/
+.pytest_cache/

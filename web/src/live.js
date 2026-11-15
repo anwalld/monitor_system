@@ -119,13 +119,29 @@ export function reconnectNow() {
   connect();
 }
 
-// REST
-export async function api(path) {
-  const r = await fetch(path, { headers: live.token ? { Authorization: `Bearer ${live.token}` } : {} });
+// REST。出错时抛出的 Error 带 status（网络错误为 0）和服务端的 detail
+export async function api(path, { method = "GET", body } = {}) {
+  const headers = live.token ? { Authorization: `Bearer ${live.token}` } : {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  let r;
+  try {
+    r = await fetch(path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  } catch (e) {
+    throw Object.assign(new Error(`网络错误：${e.message}`), { status: 0 });
+  }
   if (r.status === 401) {
     live.status = "unauthorized";
-    throw new Error("unauthorized");
+    throw Object.assign(new Error("unauthorized"), { status: 401 });
   }
-  if (!r.ok) throw new Error(`${r.status}`);
+  if (!r.ok) {
+    let detail = "";
+    try { detail = (await r.json()).detail || ""; } catch {}
+    throw Object.assign(new Error(detail || `${r.status}`), { status: r.status });
+  }
   return r.json();
+}
+
+// AI 服务（经 Nginx /api/ai/）挂掉时返回 502/503/504 或连不上
+export function aiDown(e) {
+  return [0, 502, 503, 504].includes(e?.status);
 }

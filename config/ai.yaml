@@ -1,0 +1,64 @@
+# AI 服务配置（M8）。密码和 API Key 从环境变量读取，不写在这里。
+listen: 0.0.0.0:8000
+log_level: info
+
+redis:
+  uri: tcp://127.0.0.1:6379      # 密码：LM_REDIS_PASSWORD；地址可用 LM_REDIS_URI 覆盖
+  group: ai                      # consumer group 名
+  consumer: ai-1
+mysql:                           # LM_MYSQL_HOST/PORT/USER/DATABASE/PASSWORD 覆盖
+  host: 127.0.0.1
+  port: 3306
+  user: lm
+  database: lm
+
+detect:
+  window_s: 600                  # 每个指标保留最近 10 分钟
+  min_samples: 60                # 窗口少于该数不做 z 分数检测
+  z_threshold: 4.0
+  z_high: 10.0                   # |z| 达到该值时检测器严重度为 high
+  consecutive: 3                 # 连续越界点数
+  # MAD 下限（指标单位）。direction：up 表示变大是变坏，down 表示变小是变坏
+  metrics:
+    cpu:          {min_scale: 0.05,  direction: up}
+    runq_p99_us:  {min_scale: 100,   direction: up}
+    mem_avail:    {min_scale: 0.02,  direction: down}
+    disk:         {min_scale: 0.05,  direction: up}
+    rtt_ms:       {min_scale: 2.0,   direction: up}
+    timeout_rate: {min_scale: 0.05,  direction: up}
+    retrans_rate: {min_scale: 0.01,  direction: up}
+  runq_drop_rate_max: 0.01       # 排队延迟丢弃率超过 1%（10 秒平均）
+  nic_timeout_max: 0.20          # 网卡超时率超过 20%（10 秒平均）
+  threshold_avg_s: 10
+  event_kinds: [evict, rescue_start]
+  event_max_age_s: 600           # 更早的事件只确认不处理
+  dedup_s: 600                   # 同一节点 10 分钟内只诊断一次（严重度升级除外）
+  related_s: 60                  # 同一节点 60 秒内的其他异常一起放进上下文
+
+diagnosis:
+  queue_max: 32
+  settle_s: 5                    # 检出后等 5 秒再组装上下文，紧随其后的异常（如剔除）一起交给模型
+  recent_step_s: 10              # 上下文里的指标降采样步长
+  events_lookback_s: 1800        # 状态转移与任务超时回看 30 分钟
+  anonymize: false               # true 时发给模型的节点名换成 node-1、node-2……
+
+llm:
+  timeout_s: 30
+  max_retries: 2                 # 超时、连接错误、429、5xx 的重试次数（指数退避 1、2 秒）
+  daily_token_budget: 1000000
+  max_tokens: 1200
+  temperature: 0.2
+  # 可选厂商：不设默认值，在看板设置页选择（存 Redis ai:settings）。Key 放 deploy/.env 的 key_env 变量
+  vendors:
+    deepseek:
+      label: DeepSeek
+      base_url: https://api.deepseek.com
+      key_env: DEEPSEEK_API_KEY
+      json_mode: true
+      models: [deepseek-chat]
+    qwen:
+      label: 通义千问
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      key_env: DASHSCOPE_API_KEY
+      json_mode: true
+      models: [qwen-plus, qwen-max, qwen-turbo]

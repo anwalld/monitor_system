@@ -47,3 +47,13 @@ button { cursor: pointer; }
 .empty { padding: 40px; text-align: center; color: var(--muted); }
 .filters { display: flex; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
 @media (max-width: 600px) { main { padding: 12px; } .charts { grid-template-columns: 1fr; } }
+.k-diagnosis { color: var(--rescue); }
+.sev-high { background: var(--bad); } .sev-medium { background: var(--warn); } .sev-low { background: var(--info); }
+tr.click { cursor: pointer; }
+tr.click:hover td { background: var(--bg); }
+.detail { background: var(--bg); border-radius: 8px; padding: 10px 14px; margin: 4px 0 8px; }
+.detail h4 { margin: 8px 0 4px; font-size: 13px; }
+.detail ul { margin: 0; padding-left: 20px; }
+.detail pre { white-space: pre-wrap; font-size: 12px; margin: 0; max-height: 320px; overflow: auto; }
+.notice { padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); }
+.vendors label { display: flex; gap: 8px; align-items: center; padding: 6px 0; }
