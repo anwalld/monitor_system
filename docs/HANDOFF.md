@@ -46,7 +46,7 @@
 
 | 项 | 值 |
 |----|----|
-| 开发文档（权威需求） | https://claude.ai/artifact/7gFfa9w6pxbuwo7WM1EYhN 。用 docs 工具 export 成 markdown，返回 JSON 的 `bytes_b64` 解码后是正文。上次解码的副本：`/private/tmp/claude-501/-Users-mima0000-CLionProjects-monitor-system/aac8d5c9-c883-49f8-81c7-591bfb84aeb4/scratchpad/devdoc.md`（临时目录，可能被清理） |
+| 开发文档（权威需求） | https://claude.ai/artifact/7gFfa9w6pxbuwo7WM1EYhN 。用 docs 工具 export 成 markdown，返回 JSON 的 `bytes_b64` 解码后是正文。上次解码的副本：`~/Backups/monitor_system/devdoc.md`（11-13 导出，文档更新后需重新导出） |
 | GitHub | git@github.com:anwalld/monitor_system.git（用户的公开仓库） |
 | 项目约定 | `openspec/config.yaml` |
 | Linux 构建镜像 | `lm-builder`（`deploy/docker/builder.Dockerfile`，Ubuntu 24.04 aarch64，含 clang、libbpf、bpftool、mariadb、Drogon）。产物在 `build-linux/`；TSan 在 `build-tsan/`（不含 Manager）和 `build-tsan-m/`（含 Manager） |
@@ -130,4 +130,4 @@ node experiments/ws_check.mjs --url http://172.16.255.133 --close-after 5 --duri
 - 本地 `build/` 出现重复注册的测试（ctest 数量翻倍）时，删掉 `build/tests/*_include.cmake` 和 `*_tests.cmake` 后重新 configure。
 - ports.ubuntu.com 偶尔 502、很慢，重建 `lm-builder` 或 Manager 镜像可能要 20 分钟以上，失败就重试。
 - Ubuntu 的 `libdrogon-dev` 缺开发依赖（jsoncpp、uuid、zlib、pq、sqlite3、brotli、mariadb 的 `-dev`），Dockerfile 里已显式安装；MySQL 客户端因此统一用 mariadb-connector-c。
-- 旧 git 历史备份：`/private/tmp/claude-501/-Users-mima0000--claude-spares-spare-QCgCC7/aac8d5c9-c883-49f8-81c7-591bfb84aeb4/scratchpad/monitor_system_old_history.bundle`（32 MB，临时目录，随时可能被清理）。
+- 旧 git 历史备份：`~/Backups/monitor_system/monitor_system_old_history.bundle`（32 MB，已校验完整；用 `git clone` 或 `git fetch` 从 bundle 取回）。
