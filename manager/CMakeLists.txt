@@ -75,6 +75,7 @@ else()
 endif()
 
 add_library(lm_manager_api STATIC
+  api/advisor_service.cpp
   api/scheduler_service.cpp
   breaker/prober.cpp
   breaker/rescue_session.cpp

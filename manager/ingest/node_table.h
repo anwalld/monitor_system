@@ -40,6 +40,33 @@ struct NodeState {
   bool hinted_net_missing = false;   // 已提示过“没有网卡数据”
   BreakerState br;
   double prob = 0;  // 最近一次 tick_states 算出的选中概率（非候选为 0）
+  // 负载预测（M9，Advisor.PushPredictions 推来）：因子已限幅；pred_until_mono_ms < 0 表示从未收到
+  double pred_factor = 1;
+  double pred_cpu = 0;
+  int64_t pred_until_mono_ms = -1;
+};
+
+// Advisor（AI 预测）参数（M9），manager.yaml 的 advisor 段。
+struct AdvisorParams {
+  bool enabled = true;
+  double min_factor = 0.5;        // f_pred 下限（上限恒为 1）
+  int64_t default_ttl_ms = 10000; // 推送的 ttl_ms 为 0 时使用
+  int64_t max_ttl_ms = 60000;
+  static AdvisorParams from_config(const lm::Config& cfg);
+  void validate() const;
+};
+
+// 一条预测（已从 proto 拷出）。
+struct PredictionItem {
+  std::string node_id;
+  double cpu_busy_30s = 0;
+  double factor = 1;
+};
+
+struct PredictionResult {
+  int applied = 0;
+  int unknown = 0;  // 节点表里没有的节点
+  int64_t ttl_ms = 0;
 };
 
 // 看板用的节点快照（一次加锁拷贝出来，锁外序列化）。
@@ -48,6 +75,8 @@ struct NodeView {
   int64_t age_ms = 0;
   bool online = false;
   double f_slow = 1;
+  double f_pred = 1;                 // 当前生效的预测因子（无预测或过期为 1）
+  std::optional<double> pred_cpu;    // 预测的 30 秒后 CPU；无预测或过期为空
   InflightSnapshot inflight;
 };
 
@@ -72,6 +101,8 @@ struct AcceptedSample {
   double f_slow = 1;
   int probe_fail_streak = 0;
   double prob = 0;
+  double f_pred = 1;                  // 预测因子（M9）
+  std::optional<double> pred_cpu;
   std::optional<StateChange> change;  // 这条上报引起的状态变化
   // 只写状态字段（状态变化时由调度主循环推送；不写时间序列和流）
   bool state_only = false;
@@ -116,6 +147,7 @@ class NodeTable {
     ScoringParams scoring;
     InflightParams inflight;
     BreakerParams breaker;
+    AdvisorParams advisor;
   };
 
   explicit NodeTable(Options opt) : opt_(std::move(opt)), ledger_(opt_.inflight) {}
@@ -177,6 +209,14 @@ class NodeTable {
   // 全部节点的快照（按 node_id 排序）。
   std::vector<NodeView> views(int64_t now_mono_ms) const;
 
+  // ---- 负载预测（M9）----
+  // 记录 AI 推来的预测：因子限幅到 [advisor.min_factor, 1]，过期时刻 = now + ttl（ttl 为 0 用默认，上限 max_ttl）。
+  // 一次加锁，只做赋值；未知节点忽略并计数。advisor.enabled 为 false 时不记录。
+  PredictionResult set_predictions(const std::vector<PredictionItem>& items, int64_t ttl_ms,
+                                   int64_t now_mono_ms);
+  // 当前生效的预测因子（过期或没有为 1）；未知节点返回空。
+  std::optional<double> f_pred(const std::string& node_id, int64_t now_mono_ms) const;
+
   const Options& options() const { return opt_; }
 
  private:
@@ -185,6 +225,9 @@ class NodeTable {
     return now_mono_ms - n.last_seen_mono_ms <= opt_.scoring.lost_after_ms;
   }
   bool eligible(const NodeState& n, int64_t now_mono_ms) const;
+  static bool pred_active(const NodeState& n, int64_t now_mono_ms) {
+    return n.pred_until_mono_ms >= 0 && now_mono_ms <= n.pred_until_mono_ms;
+  }
   Factors factors_for(const NodeState& n, int64_t now_mono_ms, bool as_normal) const;
   std::string evict_reason(const NodeState& n, int64_t now_mono_ms) const;
   void set_mode(NodeState& n, NodeMode m, std::string reason, int64_t now_mono_ms,

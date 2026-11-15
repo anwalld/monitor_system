@@ -37,17 +37,16 @@ kmod/cpustat/ 内核模块：定时把每核空闲时间写进只读共享页（
 bpf/          eBPF 程序：runqlat.bpf.c（调度排队延迟直方图），构建时生成 vmlinux.h 和 skeleton
 common/       环形缓冲、seqlock 读端、配置、日志
 worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  netprobe/（多网卡 ICMP 探测、TCP 重传率、流量）  task/（任务执行服务）  bench/（CPU 读取耗时基准、调度延迟对照工具）  main.cpp
-manager/      ingest/（接收上报、节点表）  scoring/（评分、剔除、加权抽样）  inflight/（在途任务账）  breaker/（节点状态机、低频探测、急救）  api/（Scheduler 服务、看板 REST/WebSocket）  scheduler_loop（100 ms 主循环）  storage/（Redis 热数据、事件流、MySQL 冷数据）  main.cpp
-ai/           AI 服务（Python 3.11、FastAPI）：lmai/（检测、诊断、LLM 接入、接口）  tests/（pytest）
-web/          Vue 3 + Vite + ECharts 看板（总览、节点详情、事件、诊断、设置）
-experiments/  lm-bench：调试与压测客户端（allocate、submit）；ws_check.mjs：看板断线重连验收；ai_faults.sh、ai_eval.py：AI 检测的故障注入与评估；mock_llm.py：模拟 OpenAI 兼容接口
+manager/      ingest/（接收上报、节点表）  scoring/（评分、剔除、加权抽样）  inflight/（在途任务账）  breaker/（节点状态机、低频探测、急救）  api/（Scheduler、Advisor 服务，看板 REST/WebSocket）  scheduler_loop（100 ms 主循环）  storage/（Redis 热数据、事件流、MySQL 冷数据）  main.cpp
+ai/           AI 服务（Python 3.11、FastAPI）：lmai/（检测、诊断、问答工具、负载预测、日报、LLM 接入、接口）  chat/mcp_server.py（MCP server）  tests/（pytest）
+web/          Vue 3 + Vite + ECharts 看板（总览、节点详情、事件、诊断、问答、日报、设置）
+experiments/  lm-bench：调试与压测客户端（allocate、submit）；ws_check.mjs：看板断线重连验收；ai_faults.sh、ai_eval.py：AI 检测的故障注入与评估；chat_eval.py：问答 20 题评估；predict_eval.py：负载预测离线评估；mock_llm.py：模拟 OpenAI 兼容接口（含函数调用、流式）
 tests/        GoogleTest 单元测试与 Redis、MySQL 集成测试
 config/       worker.yaml、manager.yaml 样例
 deploy/       docker-compose、MySQL 表结构、策略路由与自检脚本、systemd、安装脚本
 openspec/     需求规格与按里程碑划分的变更
 ```
 
-后续里程碑会加入 `ai/`。
 
 ## 构建
 
@@ -223,6 +222,30 @@ AI 服务是独立进程，只读 Redis 和 MySQL，写 `ai_diagnosis` 和 `stre
 
 开发：`docker build -f deploy/docker/ai.Dockerfile -t lm-ai . && docker run --rm lm-ai python -m pytest -q`；本机联调用 `python3 experiments/mock_llm.py` 模拟 LLM。看板开发时 `VITE_AI` 指向 AI 服务（默认 `http://127.0.0.1:8000`）。
 
+### 运维问答、负载预测、日报（M9）
+
+- **运维问答**：六个只读工具（`list_nodes`、`get_node_metrics`、`get_node_events`、`explain_score`、`get_task_stats`、`get_diagnoses`），数据来自 Redis 和 MySQL。看板“问答”页经 `POST /api/ai/chat`（SSE）用函数调用使用它们，一轮最多 6 次工具调用；同一套工具也是 MCP server，Claude Code 等客户端可以直接接（见下）。只读，不开放剔除、重启等操作。
+- **负载预测**：每 5 秒用 Holt 线性指数平滑（阻尼趋势）预测每台节点 30 秒后的 CPU 忙碌度（不用 LLM），换算成因子（≤ 0.7 为 1，0.7–1.0 线性降到 0.5），写 Redis `ai:pred`；`config/ai.yaml` 的 `predict.push: true` 时经 `Advisor.PushPredictions` 推给 Manager，乘进选择权重 `f_pred`（10 秒过期，Manager 限幅到 [0.5, 1]，AI 停掉 6 秒后回到 1）。**默认不推送**：验收时高负载段预测误差与“当前值当预测”的朴素基线持平、空闲时更差，按开发文档“比不过就关掉”。看板设置页显示两者最近 1 小时的平均绝对误差。
+- **日报**：每天 09:00（服务器本地时间）汇总前一天，数字全部由代码从 MySQL 算出（可用时长、剔除/急救次数、任务数与完成时间 P50/P99、超时、诊断）存进 `ai_daily_report.stats`；LLM 只拿这些数字写正文，写完逐个核对正文里的数字，对不上就只发数字表格。看板“日报”页查看，可手工重新生成。
+
+| 接口（经 Nginx `/api/ai/`） | 内容 |
+|------|------|
+| `POST /api/ai/chat` | 请求 `{"messages":[{"role":"user","content":"…"}]}`；SSE 事件 `tool_call`、`tool_result`、`delta`、`done`、`error` |
+| `GET /api/ai/predictions` | 每台节点最新预测、因子，Holt 与基线的 1 小时 MAE |
+| `GET /api/ai/reports?limit=30`、`GET /api/ai/reports/{day}` | 日报列表、某天的 stats 与正文 |
+| `POST /api/ai/reports/{day}` | 立即重新生成某天的日报 |
+
+MCP server（stdio）在 AI 镜像里：
+
+```bash
+# 在 Manager 机上（读 compose 用的 Redis/MySQL）；配到 Claude Code：claude mcp add lm-ops -- ssh <manager机> '<下面这行>'
+sudo docker run --rm -i --network host -v /etc/localtime:/etc/localtime:ro --env-file ~/lm/deploy/.env.mcp lm-ai python -m chat.mcp_server
+```
+
+`.env.mcp` 写 `LM_REDIS_URI=tcp://127.0.0.1:6379`、`LM_REDIS_PASSWORD`、`LM_MYSQL_HOST=127.0.0.1`、`LM_MYSQL_PASSWORD`（与 `.env` 里的密码相同）。
+
+评估：`experiments/chat_eval.py`（20 个问题，标准答案由脚本当场从 Redis/MySQL 算出）、`experiments/predict_eval.py`（用 `node:{id}:ts` 回放比较 MAE，`--grid` 扫参数）。
+
 ### 查看数据
 
 ```bash
@@ -245,7 +268,7 @@ redis-cli XREVRANGE stream:events + - COUNT 10            # 最近 10 条事件
 | M6 节点状态机 | 熔断、急救、慢启动、退避、低频探测 | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：进程停止 2.7 秒剔除不急救；恢复后进入慢启动、5 分钟回到正常；丢 50052 端口的包 2.9 秒剔除；执行超时触发自动急救，2.2 秒恢复；间歇故障时急救 0.5 秒内发现并结束 |
 | M7 存储与看板 | 事件流、MySQL 冷数据、REST/WebSocket、Vue 看板、Nginx | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：每节点每 5 分钟一行（300 样本），超时后迟到的完成改为 done；MySQL 断开 70 秒调度不受影响、恢复后一行不少；看板断线和 Manager 重启后事件不丢不重 |
 | M8 AI 第一批 | 异常检测、LLM 诊断、诊断页与设置页（BYOK） | 验收完成（虚拟机 + Mac 测试节点）：16 次注入全部检出，延迟 2.5–5 秒；DeepSeek 诊断 JSON 全部合格；停 AI、阻断 MySQL 时调度 0 失败 |
-| M9 AI 第二批 | 运维问答（MCP）、负载预测、日报 | |
+| M9 AI 第二批 | 运维问答（MCP）、负载预测、日报 | 验收完成（虚拟机 + Mac 测试节点）：DeepSeek 问答 20 题全对，平均 1 次工具调用、2.3 秒；日报正文数字与统计一致（提示词修正后 5/5）；预测未优于朴素基线，推送默认关闭；停 AI 时调度 0 失败 |
 | M10 对照实验 | 与轮询、加权轮询对比 | |
 
 每个里程碑对应 `openspec/changes/` 下的一个变更，开发流程见 [OpenSpec](https://github.com/Fission-AI/OpenSpec)。

@@ -1,4 +1,4 @@
-# AI 服务配置（M8）。密码和 API Key 从环境变量读取，不写在这里。
+# AI 服务配置（M8、M9）。密码和 API Key 从环境变量读取，不写在这里。
 listen: 0.0.0.0:8000
 log_level: info
 
@@ -62,3 +62,36 @@ llm:
       key_env: DASHSCOPE_API_KEY
       json_mode: true
       models: [qwen-plus, qwen-max, qwen-turbo]
+
+chat:                            # 运维问答（M9）：POST /api/ai/chat 与 MCP server 共用同一套只读工具
+  max_tool_calls: 6              # 一轮最多调 6 次工具，之后强制成文
+  timeout_s: 120                 # 一轮问答总时长上限
+  history_max: 10                # 只把最近 10 轮对话发给模型
+  max_tokens: 1500
+  result_max_bytes: 8000         # 单个工具结果超过该字节数时截断序列
+  score_weights: {cpu: 0.3, runq: 0.3, mem: 0.2, net: 0.2}   # 与 manager.yaml 的 scoring.*.weight 保持一致
+
+predict:                         # 负载预测（M9）：Holt 线性指数平滑（阻尼趋势），不用 LLM
+  enabled: true                  # 计算预测与在线评估（Holt 与朴素基线的 MAE）
+  push: false                    # 推给 Manager 参与调度。M9 验收：高负载段 MAE 与朴素基线持平、空闲时更差，
+                                 # 按开发文档“比不过就关掉”默认关闭；预测与在线评估照常（看板设置页可看 MAE）
+  interval_s: 5                  # 每 5 秒预测并推送一次
+  horizon_s: 30                  # 预测 30 秒后的 CPU 忙碌度
+  alpha: 0.3                     # 水平平滑系数
+  beta: 0.05                     # 趋势平滑系数
+  phi: 0.9                       # 阻尼趋势：趋势每秒乘 0.9，30 秒外推最多加约 8.6 秒的趋势（1.0 为普通 Holt）。
+                                 # 虚拟机 1 小时实测：普通 Holt（β 0.1）MAE 比朴素基线高 34%；这组参数低约 2%，
+                                 # 合成缓升负载上低约 4.5%（experiments/predict_eval.py --grid 可重扫）
+  min_samples: 30                # 样本少于该数不输出预测
+  ttl_ms: 10000                  # 推送的有效期，过期后 Manager 当 1.0
+  fresh_s: 10                    # 最后样本超过 10 秒的节点不推
+  factor_knee: 0.7               # 预测值 ≤ 0.7 因子为 1.0，0.7 到 1.0 线性降到 factor_min
+  factor_min: 0.5
+  eval_window_s: 3600            # 在线 MAE 统计窗口
+  manager_addr: 127.0.0.1:50051  # Manager gRPC，环境变量 LM_MANAGER_ADDR 覆盖
+  rpc_timeout_s: 2
+
+report:                          # 每日报告（M9）
+  enabled: true
+  at: "09:00"                    # 每天 09:00（服务器本地时间）汇总前一天
+  max_tokens: 1500

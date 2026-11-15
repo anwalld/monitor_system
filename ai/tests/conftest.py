@@ -10,6 +10,25 @@ from lmai import config  # noqa: E402
 ROOT = os.path.join(os.path.dirname(__file__), "..", "..")
 
 
+def _gen_pb():
+    """lmai/pb 的生成代码缺失时生成一次（镜像构建时已生成；本机测试需要 grpcio-tools）。"""
+    pb = os.path.join(os.path.dirname(__file__), "..", "lmai", "pb")
+    if os.path.exists(os.path.join(pb, "advisor_pb2_grpc.py")):
+        return
+    proto = os.path.join(ROOT, "proto")
+    if not os.path.isdir(proto):
+        return
+    try:
+        from grpc_tools import protoc
+    except ImportError:
+        return
+    protoc.main(["protoc", f"-I{proto}", f"--python_out={pb}", f"--grpc_python_out={pb}",
+                 os.path.join(proto, "monitor.proto"), os.path.join(proto, "advisor.proto")])
+
+
+_gen_pb()
+
+
 @pytest.fixture
 def cfg():
     path = os.path.join(ROOT, "config", "ai.yaml")

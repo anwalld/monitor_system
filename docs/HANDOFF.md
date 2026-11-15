@@ -1,6 +1,6 @@
 # 交接文档
 
-更新时间：2026-11-15 晚（UTC+8）。M0–M8 已提交并推送（M8 为 fd08f67）。虚拟机 compose 里跑着 M7 的 Manager、M8 的 AI 服务和看板。下一个里程碑是 M9（AI 第二批）。
+更新时间：2026-11-16 凌晨（UTC+8）。M0–M9 已提交并推送（M9 见下表）。虚拟机 compose 里跑着 M9 的 Manager、AI 服务和看板。下一个里程碑是 M10（对照实验）。
 
 ## 现状
 
@@ -17,23 +17,23 @@
 | M7 存储与事件 | `m7a-storage-events` | 10/10 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M7 看板 | `m7b-dashboard` | 8/8 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M8 AI 第一批 | `m8-ai-diagnosis` | 12/12 | fd08f67 | 虚拟机 + Mac 测试节点验收；DeepSeek 真实诊断；`/opsx:verify` 已过 |
+| M9 AI 第二批 | `m9-ai-ops` | 20/20 | M9_COMMIT | 虚拟机 + Mac 测试节点验收；DeepSeek 问答 20/20、日报数字一致；预测未优于基线，推送默认关闭 |
 
 - 2026-11-15 对 M1–M8 跑过 `/opsx:verify`：代码与 spec 一致，222 个 C++ 测试（含 Redis/MySQL 集成测试）和 28 个 AI 测试全过；唯一未完成任务是 M1 7.1（要 3 台 Worker）。
-- 十一个变更都没有归档（`openspec/changes/archive/` 为空，`openspec/specs/` 也是空的）。归档顺序有依赖：先 M1 再 M3（M3 的 `manager-hot-storage` 增量依赖 M1 的能力）；先 M7b 再 M8（M8 对 `web-dashboard` 用了 MODIFIED）。M0、M1 有未完成任务，归档前先问用户。
+- 十二个变更都没有归档（`openspec/changes/archive/` 为空，`openspec/specs/` 也是空的）。归档顺序有依赖：先 M1 再 M3（M3 的 `manager-hot-storage` 增量依赖 M1 的能力）；先 M7b 再 M8、M9（M8、M9 对 `web-dashboard` 用了 MODIFIED）。M0、M1 有未完成任务，归档前先问用户。
 - **归档时要改的 spec 叠加问题**：后面的变更用 ADDED 加了“自本变更起……”来覆盖前面的说法，直接归档会让主 spec 里新旧两条并存、互相矛盾。要按顺序归档，并在归档前一个后，把后一个里的对应条目改成 MODIFIED：
   - `manager-allocation`：m5a“候选集合与权重”（四个因子取 1）和“Scheduler.Allocate”（MarkSent 返回 UNIMPLEMENTED）← m5b“选择权重使用在途与超时因子”、m6“候选集合按节点状态”。
   - `worker-task-exec` / `worker-rescue`：m5b“Probe”里“Rescue 返回 UNIMPLEMENTED”← m6“Rescue 流”。
+  - `manager-allocation`：m5b“f_pred 仍取 1”← m9“选择权重使用预测因子”。`manager-hot-storage`、`manager-web-api` 的 m9 条目是纯新增。
 - 每个变更的实测数据在各自 `tasks.md`，实现中改过的方案在各自 `design.md` 的「实现中的决定」。
 
 ## 下一步
 
-1. **M9 AI 第二批**：运维问答 + MCP、负载预测 + `PushPredictions`、日报。按开发文档“2. 自然语言运维问答”“3. 负载预测参与调度”“4. 每日报告”规划。可复用：
-   - AI 服务框架 `ai/lmai`（FastAPI、Redis/MySQL 访问、LLM 客户端、重试与每日预算、BYOK 设置页）。
-   - `ai_daily_report` 表已建；`proto/advisor.proto` 已有 `Advisor.PushPredictions`。
-   - 问答要用的分数明细已在 `node:{id}`（s_cpu、s_runq、s_mem、s_net 等）。`POST /api/ai/chat` 走 SSE，nginx `/api/ai/` 要关缓冲、调长 `proxy_read_timeout`（现在 60 秒）。
+1. **M10 对照实验**：四组（轮询、按核数加权轮询、本系统不带预测、本系统带预测）各 10 轮，见开发文档“对照实验”。要十几台 Worker（现在只有 lm-worker-1 和 Mac 上的 lmtest-worker2），先问用户能否加机器；“带预测”组需要临时把 `predict.push` 打开（`config/ai.yaml`，配置打在镜像里，要重建 `lm-ai`）。
 2. **等用户决定**：
    - 第二块网卡能否上外网（M0 2.4）；是否再加 2 台 Worker（M0 4.2、M1 7.1、M5b 5.4、M6 4.3/4.4）。
-   - Mac 上的 cppaiserver 容器何时恢复（M8 验收时按用户要求停掉，用户说先不用恢复）。
+   - Mac 上的 cppaiserver 容器：本会话开始时已经在运行（用户自己恢复了），M9 验收没有停它；在同一 Docker 虚拟机上做 CPU 注入时用了 `nice -n 19`。
+   - 负载预测是否保持关闭（见下方 M9 数据）。
 3. **归档**：见上。
 4. 之后：M10（对照实验）。
 
@@ -47,6 +47,11 @@
 - **M5b**：两节点 10 个/秒 sleep 0.2：stress -c 4 期间 lm-worker-1 占比约 0.64 → 0，结束后 5–10 秒回升；stress -c 2 时 0.61 → 0.52；2464 个任务无失败，P99 213 ms。Worker 被 SIGKILL 丢事件 → 300 秒后执行超时 3 次，f_timeout 0.2235。任务子进程 CapEff/CapAmb 为 0。
 - **M6**：Worker 进程停止 2.7 秒剔除（probe 先于 lost），不急救；恢复 5.7 秒进入慢启动，5 分钟后正常；丢 50052 包 2.9 秒剔除、删规则 1.6 秒恢复；执行超时触发自动急救 2.2 秒结束（T 8 → 0.87）；间歇故障急救 0.5 秒结束。
 - **M7**：每节点每 5 分钟一行，连续桶 300 样本（跑了 23.5 小时，282 行）；310 秒的任务 300 秒记执行超时、迟到完成后 task 表为 done；事件 id 在 `stream:events` 与 `node_event` 一致；MySQL 断开 70 秒期间 228 个任务全部完成、恢复后一行不少（验收中修复了断开时首批丢失）；看板主动断开、Manager 重启后不丢不重，浏览器 1 秒后重连。
+- **M9**：
+  - 问答：DeepSeek 经 Nginx 20 题全对，平均 1.00 次工具调用、2.3 秒，首个 SSE 事件中位 0.79 秒，约 3700 token/题。MCP server 在虚拟机上用 stdio 客户端调通。
+  - 日报：提示词修正后 5 次生成全部通过数字核对；11-15 的统计与独立 SQL 一致。11-15 的 4038 个“超时”全是确认超时（M8 验收时 token 带引号，Worker 拒收），现在日报分开写执行超时和确认超时。定时触发在本机测试容器验证；虚拟机第一次定时生成在 11-16 09:00（11-15 的日报），没观察。
+  - 预测：普通 Holt 比朴素基线差 34%，改阻尼趋势后忙时整体好 1.7%，但高负载段持平、空闲时差 12–19%；缓升注入时没有提前量。按开发文档关闭推送（`predict.push: false`），预测和在线 MAE 照常（看板设置页）。
+  - 隔离：停 AI 60 秒 882 个任务 0 失败，`f_pred` 6 秒回到 1；只丢 AI→Manager 的 50051 包 58 秒，AI 只记日志，问答、检测照常。
 - **M8**：16 次注入全部检出：测试节点 cpu 4.0–4.7 s、mem 4.1–4.6 s、disk 4.6–4.8 s、nic 3.4–4.5 s、stop 2.7–3.0 s；虚拟机 runq 4.2/4.9 s（ROS 背景下一次 46.8 s）。DeepSeek（deepseek-chat）调用 JSON 全部合格，约 5000 token/次；停止故障一度被归因成网卡，上下文加“上报情况”后正确。压测中停 AI 60 秒、阻断 MySQL 60 秒，任务 0 失败，P99 约 213 ms。空闲 1 小时误报：干净测试节点 0 次；虚拟机在 ROS 负载下 32 次（全部是真实负载变化）。
 
 ## 环境
@@ -70,9 +75,10 @@
   - 任务服务开启：白名单 /bin/sleep、/usr/bin/stress、/bin/grep、/bin/sh；随机 token 在配置文件里（640 root:lm，值带引号），取法 `ssh ubuntu@172.16.255.133 "sudo awk '/^  token:/{print \$2}' /etc/lm/worker.yaml" | tr -d '"'`。
 - **cpustat 模块**：源码 `/opt/lm/kmod/cpustat`，模块在 `/lib/modules/6.8.0-149-generic/extra/`，开机由 `/etc/modules-load.d/cpustat.conf` 加载，udev 规则 `/etc/udev/rules.d/99-cpustat.rules`。
 - **compose 项目 `lm`**（`~/lm/deploy`，文件与仓库 `deploy/docker-compose.yml` 一致）：
-  - 服务：redis、mysql、manager（M7）、ai（`lm-ai:m8`，监听 127.0.0.1:8000）、nginx（`lm-web:m8`，80 端口，http://172.16.255.133/ ；`/api/ai/` → AI，`/api/`、`/ws` → Manager）。
+  - 服务：redis、mysql、manager（M9，含 Advisor 服务）、ai（M9，监听 127.0.0.1:8000）、nginx（M9 看板，80 端口，http://172.16.255.133/ ；`/api/ai/chat` 不缓冲，`/api/ai/` → AI，`/api/`、`/ws` → Manager）。镜像都是 `latest`，同一份另有 `:m9` 标签在 Mac 上。
+  - `~/lm/deploy/.env.mcp`（600，M9 新增）：从 `.env` 派生的 Redis/MySQL 连接变量，给 MCP server 和 `chat_eval.py`、`predict_eval.py` 用（命令见 README“运维问答”）。
   - 密码在 `~/lm/deploy/.env`（随机生成）；没有 `API_TOKEN`，看板和 AI 接口都不鉴权。
-  - 回滚：compose 文件 `docker-compose.yml.m7.bak`（M7）、`docker-compose.yml.m6.bak`（M6）；镜像 `lm-web:m7`，`lm-manager:m6`、`m5`、`m5a`、`m3`。
+  - 回滚：镜像 `lm-manager:m7`、`lm-ai:m8`、`lm-web:m8`（M8 状态，compose 文件不用换）；更早的 compose 文件 `docker-compose.yml.m7.bak`、`docker-compose.yml.m6.bak`，镜像 `lm-web:m7`，`lm-manager:m6`、`m5`、`m5a`、`m3`。
   - LLM：DeepSeek（deepseek-chat），Key 由用户在看板设置页填写（Redis `ai:keys`，不回显）；每日 token 预算 100 万（用户 2026-11-15 从 20 万调高）。正式配置去重 600 秒。
 - **ROS 仿真（用户的另一个项目）**：2026-11-15 15:03 起在 `~/robot_ws` 跑 ROS 2 Jazzy + Gazebo，会长期运行，不要动这些进程。它让 lm-worker-1 的 CPU 常在 0.9 以上、可用内存 0.3–0.5，Manager 反复剔除它，AI 大约每 10 分钟诊断一次（每次约 5000 token，一天约 70 万）。需要干净节点时用 Mac 上的 `lmtest-worker2`。
 - **已装软件**：stress、fio、docker、Worker 运行库（含 libbpf1）、build-essential、linux-headers、bpfcc-tools（runqlat-bpfcc）、linux-tools（perf、bpftool）。
@@ -80,7 +86,7 @@
 ### Mac 开发机（Docker Desktop：10 核、8 GB）
 
 - **`lmtest-worker2`（一直在跑）**：干净的第二个节点，接入虚拟机上的 Manager 和 AI，也会分到调度任务。镜像 `lmtest-w2img`（lm-builder + iproute2、fio、ping），两块网卡：默认 bridge 的 eth0 和 `lmtest-net2`（10.213.0.0/24）的 eth1，`--cap-add NET_ADMIN`。配置：`node_id: lmtest-worker2`、`cpu_source: proc`、`runq: off`（容器里没有 eBPF）、`nic_probe: on`（eth0 → 172.17.0.1，eth1 → 10.213.0.1）、`manager_addr: 172.16.255.133:50051`、task 段与虚拟机相同（含 token）。Manager 看到的地址是 172.16.255.1:50052。不用时 `docker rm -f lmtest-worker2 && docker network rm lmtest-net2`。
-- **cppaiserver**（用户的另一个项目）：14 个容器在 M8 验收时按用户要求停了，用户说先不用恢复。恢复：`docker start $(docker ps -aq --filter label=com.docker.compose.project=cppaiserver)`。它平时占用本机 8080、18090。
+- **cppaiserver**（用户的另一个项目）：14 个容器，M8 验收时按用户要求停过；11-15 晚已在运行（用户恢复的），不要停。它占用本机 8080、18090。在这台 Docker 虚拟机上注入 CPU 负载时用 `nice -n 19`，少影响它。
 - **`.claude/launch.json`**：本机看板开发配置（`web-dev`，`VITE_MANAGER=http://127.0.0.1:18080`、`VITE_AI=http://127.0.0.1:18000`），不提交。
 
 ## 常用操作
@@ -146,6 +152,10 @@ python3 experiments/ai_eval.py --url http://172.16.255.133 --faults f.jsonl
 - 给 lm-bench 的 token 要去掉引号，否则全部 UNAUTHENTICATED（错误码 16）。
 
 **AI 服务**
+- 三个配置（`config/ai.yaml`、`config/manager.yaml`）打在镜像里，改开关（如 `predict.push`）要重建镜像再换。
+- `ai/lmai/pb/` 的 proto 代码在镜像构建时生成，不进 Git；本机跑 pytest 时 `conftest.py` 会在缺失时生成（需要 grpcio-tools，所以用镜像跑：`docker run --rm lm-ai python -m pytest -q`）。
+- 跑 pytest 要看真实退出码：`… | tail -1` 会吞掉失败（M9 时因此部署过一次没过测试的镜像，随后修正）。
+- 问答评估每次约 8 万 token；日报每次 1000–3500 token。
 - 检测器的最近异常（`/api/ai/anomalies`）和去重状态只在内存里，重启 AI 容器就清空；评估前先存下来，`ai_eval.py --file` 读保存的文件。
 - 同一节点 10 分钟只诊断一次，严重度升级除外；想让每次注入都有诊断，在测试配置里临时把 `dedup_s` 调小，别改正式配置。
 - 容器里的 `/proc` 是 Docker 虚拟机全局的：在任何容器里跑 stress 都会体现在 `lmtest-worker2` 的指标上；内存故障别吃太多，同一 Docker 虚拟机上还有别的容器。

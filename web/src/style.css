@@ -57,3 +57,4 @@ tr.click:hover td { background: var(--bg); }
 .detail pre { white-space: pre-wrap; font-size: 12px; margin: 0; max-height: 320px; overflow: auto; }
 .notice { padding: 12px 16px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); }
 .vendors label { display: flex; gap: 8px; align-items: center; padding: 6px 0; }
+.kv dd.warn { color: var(--warn); font-weight: 600; }

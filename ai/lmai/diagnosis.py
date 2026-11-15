@@ -1,10 +1,11 @@
-"""服务编排：消费两个 Stream、检测、诊断队列、写 MySQL 和诊断事件。"""
+"""服务编排：消费两个 Stream、检测、诊断队列、写 MySQL 和诊断事件；M9 加负载预测推送、问答工具、日报定时。"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
+import math
 import time
 from collections import deque
 from typing import Any, Callable
@@ -13,7 +14,10 @@ from .config import Config
 from .context import SYSTEM_PROMPT, Anonymizer, build_context
 from .detector import Anomaly, Detector
 from .llm import LlmClient, LlmResult
+from .predict import Predictor, Pusher
+from .report import Reporter
 from .store import MySQL, Redis, event_fields
+from .tools import Tools
 
 log = logging.getLogger("lmai")
 
@@ -61,6 +65,14 @@ class Service:
         self.warmed = 0
         self.tasks: list[asyncio.Task] = []
         self._running = False
+        # M9
+        self.tools = Tools(cfg, redis, mysql, clock)
+        self.predictor = Predictor.from_cfg(cfg.predict)
+        self.pusher = Pusher(cfg.predict.manager_addr, cfg.predict.rpc_timeout_s)
+        self.reporter = Reporter(cfg, mysql, llm, clock)
+        self.push_ok = 0
+        self.push_fail = 0
+        self.last_push: dict[str, Any] | None = None
 
     def now_ms(self) -> int:
         return int(self.clock() * 1000)
@@ -68,8 +80,13 @@ class Service:
     # ---------- 生命周期 ----------
     def start(self) -> None:
         self._running = True
-        for coro in (self.run_metrics(), self.run_events(), self.run_diagnosis(), self.run_flush()):
+        for coro in (self.run_metrics(), self.run_events(), self.run_diagnosis(), self.run_flush(),
+                     self.run_predict(), self.reporter.catch_up()):
             self.tasks.append(asyncio.create_task(coro))
+        try:
+            self.reporter.start()
+        except Exception as e:  # 定时器起不来不影响其他功能
+            log.warning("日报定时任务启动失败：%s: %s", type(e).__name__, e)
 
     async def stop(self) -> None:
         self._running = False
@@ -77,6 +94,8 @@ class Service:
             t.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
         self.tasks.clear()
+        self.reporter.stop()
+        await self.pusher.close()
 
     # ---------- 入队 ----------
     def handle(self, anomalies: list[Anomaly]) -> None:
@@ -106,6 +125,13 @@ class Service:
                 except json.JSONDecodeError:
                     pass
             self.warmed += self.det.warm(node, samples)
+            if self.cfg.predict.enabled:  # 预测也用历史样本预热，重启后不用等 min_samples 秒
+                for smp in sorted(samples, key=lambda x: float(x.get("ts_ms") or 0)):
+                    try:
+                        self.predictor.observe(node, int(float(smp.get("ts_ms") or 0)),
+                                               float(smp.get("cpu_busy") or 0.0))
+                    except (TypeError, ValueError):
+                        pass
         log.info("检测窗口预热完成：%d 台节点，%d 条样本", self.det.node_count(), self.warmed)
 
     def on_metrics_entry(self, fields: dict[str, str]) -> None:
@@ -117,6 +143,12 @@ class Service:
         for s in nodes:
             self.samples_total += 1
             self.handle(self.det.on_sample(s, now))
+            if self.cfg.predict.enabled:
+                try:
+                    self.predictor.observe(s.get("node_id") or "", int(float(s.get("ts_ms") or 0)),
+                                           float(s.get("cpu_busy") or 0.0))
+                except (TypeError, ValueError):
+                    pass
 
     def on_event_entry(self, eid: str, fields: dict[str, str]) -> None:
         e = event_fields(eid, fields)
@@ -154,6 +186,52 @@ class Service:
 
     async def run_metrics(self) -> None:
         await self._consume("stream:metrics", True, lambda _id, f: self.on_metrics_entry(f))
+
+    # ---------- 负载预测（M9） ----------
+    async def predict_once(self) -> list[dict[str, Any]]:
+        pc = self.cfg.predict
+        now = self.now_ms()
+        items = self.predictor.tick(now)
+        if not items:
+            return items
+        try:
+            await self.redis.set_preds({i["node_id"]: {k: i[k] for k in ("cpu_busy_30s", "factor", "cpu_now", "ts_ms")}
+                                        for i in items}, max(1, math.ceil(pc.ttl_ms / 1000)))
+        except Exception as e:
+            self.errs.warn("pred", "写 ai:pred 失败：%s", e)
+        if pc.push:
+            try:
+                await self.pusher.push(items, now, pc.ttl_ms)
+                self.push_ok += 1
+                self.last_push = {"ts_ms": now, "nodes": len(items), "ok": True}
+            except Exception as e:
+                self.push_fail += 1
+                self.last_push = {"ts_ms": now, "nodes": len(items), "ok": False, "error": f"{type(e).__name__}"}
+                self.errs.warn("push", "推送预测到 Manager 失败：%s", e)
+        return items
+
+    async def run_predict(self) -> None:
+        while self._running:
+            await asyncio.sleep(self.cfg.predict.interval_s)
+            if not self.cfg.predict.enabled:
+                continue
+            try:
+                await self.predict_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("预测出错")
+
+    def predict_health(self) -> dict[str, Any]:
+        pc = self.cfg.predict
+        tot = self.predictor.view(self.now_ms())["total"]
+        return {"enabled": pc.enabled, "push": pc.enabled and pc.push, "manager": pc.manager_addr,
+                "nodes": sum(1 for st in self.predictor.nodes.values() if st.latest is not None),
+                "push_ok": self.push_ok, "push_fail": self.push_fail, "last_push": self.last_push,
+                "mae_holt": tot["mae_holt"], "mae_naive": tot["mae_naive"], "points": tot["points"]}
+
+    def report_health(self) -> dict[str, Any]:
+        return self.reporter.health()
 
     async def run_events(self) -> None:
         await self._consume("stream:events", False, self.on_event_entry)

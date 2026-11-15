@@ -176,7 +176,9 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
           {"f_timeout", fmt_float(static_cast<float>(a.inflight.f_timeout))},
           {"timeout_count", fmt_float(static_cast<float>(a.inflight.timeout_count))},
           {"prob", fmt_float(static_cast<float>(a.prob))},
+          {"f_pred", fmt_float(static_cast<float>(a.f_pred))},
       };
+      if (a.pred_cpu) fields["pred_cpu"] = fmt_float(static_cast<float>(*a.pred_cpu));
       for (auto& kv : state_fields(a)) fields.insert(std::move(kv));
       // 调度延迟（M3）：Worker 三个字段同时设置或同时不设置。未上报时删掉旧值，避免读到过时的 P99
       if (s.has_runq_p99_us()) {
@@ -188,6 +190,7 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
       if (!s.has_runq_p99_us()) {
         pipe.hdel(hkey, {"runq_p50_us", "runq_p99_us", "runq_drop_rate"});
       }
+      if (!a.pred_cpu) pipe.hdel(hkey, "pred_cpu");  // 预测过期或没有：删掉旧值
       pipe.zadd(key("node:" + s.node_id() + ":ts"), json, static_cast<double>(s.ts_ms()));
       pending_stream_[s.node_id()] = json;
       known_nodes_[s.node_id()] = true;

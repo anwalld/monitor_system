@@ -1,9 +1,30 @@
 #include "node_table.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace lm::manager {
+
+AdvisorParams AdvisorParams::from_config(const lm::Config& cfg) {
+  AdvisorParams p;
+  p.enabled = cfg.get<bool>("advisor.enabled", p.enabled);
+  p.min_factor = cfg.get<double>("advisor.min_factor", p.min_factor);
+  p.default_ttl_ms = cfg.get<int64_t>("advisor.default_ttl_ms", p.default_ttl_ms);
+  p.max_ttl_ms = cfg.get<int64_t>("advisor.max_ttl_ms", p.max_ttl_ms);
+  p.validate();
+  return p;
+}
+
+void AdvisorParams::validate() const {
+  if (!(min_factor > 0 && min_factor <= 1)) {
+    throw lm::ConfigError("配置项 advisor.min_factor 不合法：必须在 (0, 1] 内");
+  }
+  if (default_ttl_ms <= 0) throw lm::ConfigError("配置项 advisor.default_ttl_ms 不合法：必须大于 0");
+  if (max_ttl_ms < default_ttl_ms) {
+    throw lm::ConfigError("配置项 advisor.max_ttl_ms 不合法：不能小于 default_ttl_ms");
+  }
+}
 
 std::optional<std::string> NodeTable::validate(const lm::Sample& s) const {
   if (s.node_id().empty()) return std::string("node_id 不能为空");
@@ -72,6 +93,9 @@ NodeTable::Result NodeTable::apply(const lm::Sample& s, std::string_view peer_ip
     out->f_slow = slow_factor(n.br, now_mono_ms, opt_.breaker);
     out->probe_fail_streak = n.br.probe_fail_streak;
     out->prob = n.prob;
+    out->f_pred = pred_active(n, now_mono_ms) ? n.pred_factor : 1.0;
+    out->pred_cpu.reset();
+    if (pred_active(n, now_mono_ms)) out->pred_cpu = n.pred_cpu;
     out->node_id = n.node_id;
     if (inserted) {
       StateChange c;
@@ -217,6 +241,7 @@ bool NodeTable::eligible(const NodeState& n, int64_t now_mono_ms) const {
 
 Factors NodeTable::factors_for(const NodeState& n, int64_t now_mono_ms, bool as_normal) const {
   Factors f = ledger_.factors(n.node_id);
+  if (pred_active(n, now_mono_ms)) f.pred = n.pred_factor;
   if (!as_normal && n.br.mode == NodeMode::kSlowStart) {
     f.slow = slow_factor(n.br, now_mono_ms, opt_.breaker);
     f.inflight = 1;  // 慢启动期间在途系列的二次调整暂停，只积累基线
@@ -458,12 +483,48 @@ std::vector<NodeView> NodeTable::views(int64_t now_mono_ms) const {
     v.age_ms = now_mono_ms - n.last_seen_mono_ms;
     v.online = v.age_ms <= opt_.online_window_ms;
     v.f_slow = slow_factor(n.br, now_mono_ms, opt_.breaker);
+    if (pred_active(n, now_mono_ms)) {
+      v.f_pred = n.pred_factor;
+      v.pred_cpu = n.pred_cpu;
+    }
     v.inflight = ledger_.snapshot(id);
     out.push_back(std::move(v));
   }
   std::sort(out.begin(), out.end(),
             [](const NodeView& a, const NodeView& b) { return a.st.node_id < b.st.node_id; });
   return out;
+}
+
+PredictionResult NodeTable::set_predictions(const std::vector<PredictionItem>& items, int64_t ttl_ms,
+                                            int64_t now_mono_ms) {
+  PredictionResult r;
+  const AdvisorParams& ap = opt_.advisor;
+  if (ttl_ms <= 0) ttl_ms = ap.default_ttl_ms;
+  ttl_ms = std::min(ttl_ms, ap.max_ttl_ms);
+  r.ttl_ms = ttl_ms;
+  if (!ap.enabled) return r;
+  std::lock_guard<std::mutex> lk(mu_);
+  for (const auto& it : items) {
+    auto found = nodes_.find(it.node_id);
+    if (found == nodes_.end()) {
+      ++r.unknown;
+      continue;
+    }
+    NodeState& n = found->second;
+    const double f = std::isfinite(it.factor) ? it.factor : 1.0;
+    n.pred_factor = std::min(1.0, std::max(ap.min_factor, f));
+    n.pred_cpu = std::isfinite(it.cpu_busy_30s) ? std::min(1.0, std::max(0.0, it.cpu_busy_30s)) : 0.0;
+    n.pred_until_mono_ms = now_mono_ms + ttl_ms;
+    ++r.applied;
+  }
+  return r;
+}
+
+std::optional<double> NodeTable::f_pred(const std::string& node_id, int64_t now_mono_ms) const {
+  std::lock_guard<std::mutex> lk(mu_);
+  auto it = nodes_.find(node_id);
+  if (it == nodes_.end()) return std::nullopt;
+  return pred_active(it->second, now_mono_ms) ? it->second.pred_factor : 1.0;
 }
 
 }  // namespace lm::manager

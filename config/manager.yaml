@@ -54,6 +54,11 @@ breaker:                       # 节点状态机（M6）：慢启动、剔除、
     backoff_min_s: 300         # 急救退避 5、10、20 … 分钟
     backoff_max_s: 3600
     backoff_half_life_s: 86400 # 退避级别的半衰期
+advisor:                       # AI 负载预测（M9）：Advisor.PushPredictions 推来的因子参与选择权重
+  enabled: true                # false 时仍接收请求但不记录，f_pred 恒为 1
+  min_factor: 0.5              # f_pred 限幅到 [min_factor, 1]
+  default_ttl_ms: 10000        # 推送没带 ttl 时的有效期
+  max_ttl_ms: 60000            # ttl 上限；过期后 f_pred 回到 1
 mysql:                         # 冷数据（M7）：5 分钟聚合、事件、任务；挂掉不影响调度
   enabled: true
   host: 127.0.0.1              # 环境变量 LM_MYSQL_HOST 可覆盖

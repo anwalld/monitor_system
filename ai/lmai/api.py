@@ -5,11 +5,17 @@ from __future__ import annotations
 import hmac
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+import re
+
+from fastapi import Body, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from .chat import clean_history, run_chat, sse
 from .diagnosis import Service
 from .llm import Selection
+
+DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class SettingsIn(BaseModel):
@@ -59,6 +65,7 @@ def create_app(svc: Service, lifespan: Any = None) -> FastAPI:
             "nodes": svc.det.node_count(), "samples": svc.samples_total, "warmed": svc.warmed,
             "queue": svc.queue.qsize(), "dropped": svc.dropped, "pending_rows": len(svc.pending_rows),
             "anomalies_total": svc.det.total, "diagnoses_total": svc.diagnoses_total,
+            "predict": svc.predict_health(), "report": svc.report_health(),
         }
 
     @app.get("/api/ai/diagnoses", dependencies=[Depends(auth)])
@@ -124,5 +131,44 @@ def create_app(svc: Service, lifespan: Any = None) -> FastAPI:
         except Exception as e:
             raise HTTPException(503, "Redis 不可用") from e
         return await get_settings()
+
+    # ---------- M9：问答、预测、日报 ----------
+    @app.post("/api/ai/chat", dependencies=[Depends(auth)])
+    async def chat(body: dict = Body(...)) -> StreamingResponse:
+        try:
+            history = clean_history(body.get("messages"), cfg.chat.history_max)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+
+        async def gen():  # type: ignore[no-untyped-def]
+            async for ev, data in run_chat(cfg, svc.llm, svc.tools, history):
+                yield sse(ev, data)
+
+        return StreamingResponse(gen(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.get("/api/ai/predictions", dependencies=[Depends(auth)])
+    async def predictions() -> dict[str, Any]:
+        return svc.predictor.view(svc.now_ms())
+
+    def check_day(day: str) -> str:
+        if not DAY_RE.match(day):
+            raise HTTPException(400, "日期格式为 YYYY-MM-DD")
+        return day
+
+    @app.get("/api/ai/reports", dependencies=[Depends(auth)])
+    async def reports(limit: int = Query(30, ge=1, le=365)) -> dict[str, Any]:
+        return {"reports": await mysql_or_503(svc.mysql.list_reports(limit))}
+
+    @app.get("/api/ai/reports/{day}", dependencies=[Depends(auth)])
+    async def report(day: str) -> dict[str, Any]:
+        row = await mysql_or_503(svc.mysql.get_report(check_day(day)))
+        if row is None:
+            raise HTTPException(404, "没有这一天的日报")
+        return row
+
+    @app.post("/api/ai/reports/{day}", dependencies=[Depends(auth)])
+    async def make_report(day: str) -> dict[str, Any]:
+        return await mysql_or_503(svc.reporter.generate(check_day(day)))
 
     return app

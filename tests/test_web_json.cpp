@@ -73,8 +73,14 @@ TEST(WebJson, NodeObject) {
                            R"("best_nic":"ens160")", R"("inflight":2)", R"("name":"eth0")"}) {
     EXPECT_NE(j.find(want), std::string::npos) << want << " in " << j;
   }
+  EXPECT_NE(j.find(R"("f_pred":1)"), std::string::npos) << j;
+  EXPECT_NE(j.find(R"("pred_cpu":null)"), std::string::npos) << j;
   v.st.latest.set_runq_p99_us(180);
   EXPECT_NE(node_json(v).find(R"("runq_p99_us":180)"), std::string::npos);
+  v.f_pred = 0.75;
+  v.pred_cpu = 0.85;
+  EXPECT_NE(node_json(v).find(R"("f_pred":0.75)"), std::string::npos);
+  EXPECT_NE(node_json(v).find(R"("pred_cpu":0.85)"), std::string::npos);
   EXPECT_EQ(nodes_array_json({}), "[]");
 }
 

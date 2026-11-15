@@ -6,6 +6,8 @@ import NodeDetail from "./pages/NodeDetail.vue";
 import Events from "./pages/Events.vue";
 import Diagnoses from "./pages/Diagnoses.vue";
 import Settings from "./pages/Settings.vue";
+import Chat from "./pages/Chat.vue";
+import Reports from "./pages/Reports.vue";
 import { connect } from "./live.js";
 import "./style.css";
 
@@ -16,6 +18,8 @@ const router = createRouter({
     { path: "/nodes/:id", component: NodeDetail, props: true },
     { path: "/events", component: Events },
     { path: "/diagnoses", component: Diagnoses },
+    { path: "/chat", component: Chat },
+    { path: "/reports", component: Reports },
     { path: "/settings", component: Settings },
   ],
 });

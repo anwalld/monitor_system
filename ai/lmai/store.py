@@ -105,6 +105,56 @@ class Redis:
                                   "detail": json.dumps(detail, ensure_ascii=False, separators=(",", ":"))},
                                  maxlen=10000, approximate=True)
 
+    # ---------- M9：问答工具与预测 ----------
+    async def node_ids(self) -> list[str]:
+        """有 node:{id} Hash 的节点（不含 :ts）。"""
+        pre, out = self.key("node:"), []
+        async for k in self.r.scan_iter(match=pre + "*", count=200):
+            rest = k[len(pre):]
+            if ":" not in rest:
+                out.append(rest)
+        return sorted(out)
+
+    async def node_hashes(self, nodes: list[str]) -> dict[str, dict[str, str]]:
+        p = self.r.pipeline(transaction=False)
+        for n in nodes:
+            p.hgetall(self.key(f"node:{n}"))
+        res = await p.execute()
+        return {n: h for n, h in zip(nodes, res) if h}
+
+    async def events_since(self, since_ms: int, node: str | None = None, limit: int = 100,
+                           scan_max: int = 5000) -> list[dict[str, Any]]:
+        """stream:events 里 since_ms 之后的事件（新的在前），可按节点过滤。"""
+        items = await self.r.xrevrange(self.key("stream:events"), "+", f"{since_ms}-0", count=scan_max)
+        out = []
+        for eid, f in items:
+            if node and f.get("node") != node:
+                continue
+            out.append(event_fields(eid, f))
+            if len(out) >= limit:
+                break
+        return out
+
+    async def get_preds(self) -> dict[str, dict[str, Any]]:
+        h = await self.r.hgetall(self.key("ai:pred"))
+        out = {}
+        for n, v in h.items():
+            try:
+                out[n] = json.loads(v)
+            except json.JSONDecodeError:
+                pass
+        return out
+
+    async def set_preds(self, preds: dict[str, dict[str, Any]], ttl_s: int) -> None:
+        if not preds:
+            return
+        k = self.key("ai:pred")
+        p = self.r.pipeline(transaction=True)
+        p.delete(k)  # 只保留这一轮的节点，下线的节点不残留
+        p.hset(k, mapping={n: json.dumps(v, separators=(",", ":")) for n, v in preds.items()})
+        p.expire(k, ttl_s)
+        await p.execute()
+
     async def get_selection(self) -> Selection:
         h = await self.r.hgetall(self.key("ai:settings"))
         vendor = h.get("vendor", "")
@@ -248,6 +298,104 @@ class MySQL:
         return {"count": len(rows),
                 "latest": [{"task_id": r["task_id"], "t_alloc_ms": dt_ms(r["t_alloc"]),
                             "received": r["t_recv"] is not None} for r in rows[:5]]}
+
+    # ---------- M9：问答工具与日报 ----------
+    async def node_ids(self) -> list[str]:
+        rows = await self._run("SELECT node_id FROM node ORDER BY node_id")
+        return [r["node_id"] for r in rows]
+
+    async def metrics_5m(self, node: str | None, since_ms: int, until_ms: int) -> list[dict[str, Any]]:
+        where, args = ["bucket_start >= %s", "bucket_start < %s"], [utc_dt(since_ms), utc_dt(until_ms)]
+        if node:
+            where.append("node_id = %s")
+            args.append(node)
+        rows = await self._run(
+            f"SELECT * FROM node_metrics_5m WHERE {' AND '.join(where)} ORDER BY node_id, bucket_start",
+            tuple(args))
+        for r in rows:
+            r["ts_ms"] = dt_ms(r.pop("bucket_start"))
+        return rows
+
+    async def node_events(self, node: str | None, since_ms: int, until_ms: int, limit: int = 100,
+                          kinds: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+        where, args = ["ts >= %s", "ts < %s"], [utc_dt(since_ms), utc_dt(until_ms)]
+        if node:
+            where.append("node_id = %s")
+            args.append(node)
+        if kinds:
+            where.append("kind IN (" + ",".join(["%s"] * len(kinds)) + ")")
+            args.extend(kinds)
+        rows = await self._run(
+            f"SELECT node_id, ts, kind, detail FROM node_event WHERE {' AND '.join(where)} "
+            f"ORDER BY ts DESC, id DESC LIMIT %s", (*args, limit))
+        out = []
+        for r in rows:
+            d = r["detail"]
+            if isinstance(d, (bytes, str)):
+                try:
+                    d = json.loads(d)
+                except (json.JSONDecodeError, TypeError):
+                    d = {"raw": str(d)}
+            out.append({"node": r["node_id"], "ts_ms": dt_ms(r["ts"]), "kind": r["kind"], "detail": d or {}})
+        return out
+
+    async def event_counts(self, since_ms: int, until_ms: int, kinds: tuple[str, ...]) -> list[dict[str, Any]]:
+        return await self._run(
+            "SELECT node_id, kind, COUNT(*) AS n FROM node_event WHERE ts >= %s AND ts < %s AND kind IN ("
+            + ",".join(["%s"] * len(kinds)) + ") GROUP BY node_id, kind",
+            (utc_dt(since_ms), utc_dt(until_ms), *kinds))
+
+    async def task_rows(self, node: str | None, since_ms: int, until_ms: int,
+                        limit: int = 500000) -> list[dict[str, Any]]:
+        """按 t_alloc 落在区间内的任务：node_id、state、no_recv（Worker 没确认收到）、exec_ms（done 的 t_done − t_recv，毫秒）。"""
+        where, args = ["t_alloc >= %s", "t_alloc < %s"], [utc_dt(since_ms), utc_dt(until_ms)]
+        if node:
+            where.append("node_id = %s")
+            args.append(node)
+        return await self._run(
+            "SELECT node_id, state, (t_recv IS NULL) AS no_recv, "
+            "IF(state = 'done' AND t_recv IS NOT NULL AND t_done IS NOT NULL, "
+            "TIMESTAMPDIFF(MICROSECOND, t_recv, t_done) / 1000, NULL) AS exec_ms "
+            f"FROM task WHERE {' AND '.join(where)} LIMIT %s", (*args, limit))
+
+    async def diagnoses_between(self, node: str | None, since_ms: int, until_ms: int,
+                                limit: int = 200) -> list[dict[str, Any]]:
+        where, args = ["ts >= %s", "ts < %s"], [utc_dt(since_ms), utc_dt(until_ms)]
+        if node:
+            where.append("node_id = %s")
+            args.append(node)
+        rows = await self._run(
+            f"SELECT * FROM ai_diagnosis WHERE {' AND '.join(where)} ORDER BY ts DESC, id DESC LIMIT %s",
+            (*args, limit))
+        return [self._row(r, True) for r in rows]
+
+    async def put_report(self, day: str, stats: dict[str, Any], markdown: str) -> None:
+        await self._run(
+            "INSERT INTO ai_daily_report (day, stats, markdown, created_at) VALUES (%s, %s, %s, %s) AS new "
+            "ON DUPLICATE KEY UPDATE stats = new.stats, markdown = new.markdown, created_at = new.created_at",
+            (day, json.dumps(stats, ensure_ascii=False), markdown, utc_dt(int(time.time() * 1000))),
+            fetch="lastrowid")
+
+    @staticmethod
+    def _report_row(r: dict[str, Any]) -> dict[str, Any]:
+        stats = json.loads(r["stats"]) if isinstance(r["stats"], (str, bytes)) else r["stats"]
+        return {"day": str(r["day"]), "created_at": dt_ms(r["created_at"]), "stats": stats,
+                "markdown": r.get("markdown")}
+
+    async def get_report(self, day: str) -> dict[str, Any] | None:
+        r = await self._run("SELECT * FROM ai_daily_report WHERE day = %s", (day,), fetch="one")
+        return self._report_row(r) if r else None
+
+    async def list_reports(self, limit: int) -> list[dict[str, Any]]:
+        rows = await self._run(
+            "SELECT day, stats, created_at FROM ai_daily_report ORDER BY day DESC LIMIT %s", (limit,))
+        out = []
+        for r in rows:
+            row = self._report_row({**r, "markdown": None})
+            st = row["stats"] or {}
+            out.append({"day": row["day"], "created_at": row["created_at"], "llm": st.get("llm"),
+                        "nodes": len(st.get("nodes") or []), "tasks": (st.get("totals") or {}).get("tasks")})
+        return out
 
     async def close(self) -> None:
         await self._drop()

@@ -62,7 +62,7 @@ if(NOT LM_ENABLE_TSAN)
   target_compile_definitions(test_worker_rpc PRIVATE LM_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config")
   if(LM_BUILD_MANAGER)
     lm_add_test(test_manager_rpc test_collector_service.cpp test_scheduler_service.cpp
-      test_breaker_rpc.cpp)
+      test_breaker_rpc.cpp test_advisor_service.cpp)
     target_link_libraries(test_manager_rpc PRIVATE lm_manager_ingest lm_manager_api lm_worker_task)
   endif()
 endif()

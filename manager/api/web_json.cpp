@@ -62,6 +62,8 @@ std::string node_json(const NodeView& v) {
       .add_str("state_reason", n.br.reason)
       .add_int("state_since_ms", n.br.since_wall_ms)
       .add("f_slow", v.f_slow)
+      .add("f_pred", v.f_pred)
+      .raw("pred_cpu", opt_num(v.pred_cpu.has_value(), v.pred_cpu.value_or(0)))
       .add("score", n.score.total)
       .raw("score_parts", parts.str())
       .raw("evicted", n.evict.evicted() ? "true" : "false")

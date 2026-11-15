@@ -66,6 +66,44 @@ class LlmCfg:
 
 
 @dataclass
+class ChatCfg:
+    max_tool_calls: int = 6          # 一轮问答最多调几次工具
+    timeout_s: float = 120           # 一轮问答总时长上限
+    history_max: int = 10            # 只取最近几轮对话
+    max_tokens: int = 1500
+    result_max_bytes: int = 8000     # 单个工具结果的 JSON 上限，超出截断序列
+    # 与 manager.yaml 的 scoring.*.weight 保持一致（Manager 不把权重写进 Redis）
+    score_weights: dict[str, float] = field(
+        default_factory=lambda: {"cpu": 0.3, "runq": 0.3, "mem": 0.2, "net": 0.2})
+
+
+@dataclass
+class PredictCfg:
+    enabled: bool = True             # 计算预测与在线评估
+    push: bool = False               # 推给 Manager（enabled 也为 true 时才推）；M9 验收未优于朴素基线，默认关闭
+    interval_s: float = 5
+    horizon_s: float = 30
+    alpha: float = 0.3
+    beta: float = 0.05
+    phi: float = 0.9                 # 阻尼趋势：趋势每秒乘 φ（1.0 为普通 Holt）
+    min_samples: int = 30
+    ttl_ms: int = 10000
+    fresh_s: float = 10              # 最后样本超过该秒数的节点不推
+    factor_knee: float = 0.7         # 预测值不超过它时因子为 1
+    factor_min: float = 0.5          # 预测值达到 1.0 时的因子
+    eval_window_s: float = 3600      # 在线 MAE 窗口
+    manager_addr: str = "127.0.0.1:50051"
+    rpc_timeout_s: float = 2
+
+
+@dataclass
+class ReportCfg:
+    enabled: bool = True
+    at: str = "09:00"                # 每天几点（服务器本地时间）生成前一天的日报
+    max_tokens: int = 1500
+
+
+@dataclass
 class Config:
     listen_host: str = "0.0.0.0"
     listen_port: int = 8000
@@ -84,6 +122,9 @@ class Config:
     detect: DetectCfg = field(default_factory=DetectCfg)
     diagnosis: DiagnosisCfg = field(default_factory=DiagnosisCfg)
     llm: LlmCfg = field(default_factory=LlmCfg)
+    chat: ChatCfg = field(default_factory=ChatCfg)
+    predict: PredictCfg = field(default_factory=PredictCfg)
+    report: ReportCfg = field(default_factory=ReportCfg)
 
 
 DEFAULT_METRICS = {
@@ -146,7 +187,16 @@ def from_dict(raw: dict[str, Any], env: dict[str, str] | None = None) -> Config:
             json_mode=bool(v.get("json_mode", True)),
         )
 
+    ch = raw.get("chat") or {}
+    _fill(c.chat, ch, skip=("score_weights",))
+    if ch.get("score_weights"):
+        c.chat.score_weights = {str(k): float(v) for k, v in ch["score_weights"].items()}
+    _fill(c.predict, raw.get("predict") or {})
+    _fill(c.report, raw.get("report") or {})
+    c.report.at = str(c.report.at)
+
     # 环境变量覆盖
+    c.predict.manager_addr = env.get("LM_MANAGER_ADDR", c.predict.manager_addr)
     c.redis_uri = env.get("LM_REDIS_URI", c.redis_uri)
     c.redis_password = env.get("LM_REDIS_PASSWORD", c.redis_password)
     c.key_prefix = env.get("LM_AI_KEY_PREFIX", c.key_prefix)

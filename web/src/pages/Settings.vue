@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { api, aiDown } from "../live.js";
-import { datetime, llmReason } from "../fmt.js";
+import { datetime, llmReason, num } from "../fmt.js";
 
 const s = ref(null);
 const health = ref(null);
@@ -93,6 +93,30 @@ async function save(clearKey = false) {
     <p v-if="health?.llm?.last_call" class="muted" :style="{ color: health.llm.last_call.reason === 'ok' ? '' : 'var(--bad)' }">
       最近一次调用（{{ datetime(health.llm.last_call.ts_ms) }}，{{ health.llm.last_call.model }}）：
       {{ health.llm.last_call.reason === "ok" ? `成功，${health.llm.last_call.tokens} tokens` : llmReason(health.llm.last_call.reason) }}
+    </p>
+  </div>
+  <div v-if="s && health?.predict" class="card" style="max-width: 640px; margin-top: 14px">
+    <h3>负载预测</h3>
+    <p class="muted">每 5 秒用 Holt 线性指数平滑预测每台节点 30 秒后的 CPU 忙碌度：不超过 0.7 时系数为 1，0.7 到 1.0 线性降到 0.5，推给 Manager
+      乘进选择权重（10 秒过期）。开关在服务器的 config/ai.yaml（predict.enabled、predict.push）。</p>
+    <dl class="kv">
+      <dt>预测</dt><dd>{{ health.predict.enabled ? `开启，${health.predict.nodes} 台节点` : "关闭" }}</dd>
+      <dt>推送给 Manager</dt>
+      <dd>{{ health.predict.push ? `开启（成功 ${health.predict.push_ok} 次，失败 ${health.predict.push_fail} 次）` : "关闭" }}</dd>
+      <dt>最近 1 小时 MAE（Holt）</dt><dd>{{ num(health.predict.mae_holt, 4) }}</dd>
+      <dt>最近 1 小时 MAE（基线：当前值）</dt><dd>{{ num(health.predict.mae_naive, 4) }}</dd>
+      <dt>对比点数</dt><dd>{{ health.predict.points }}</dd>
+    </dl>
+    <p v-if="health.predict.mae_holt != null && health.predict.mae_naive != null" class="muted"
+      :style="{ color: health.predict.mae_holt <= health.predict.mae_naive ? 'var(--ok)' : 'var(--warn)' }">
+      {{ health.predict.mae_holt <= health.predict.mae_naive ? "Holt 优于朴素基线" : "Holt 不如朴素基线，建议关闭推送（predict.push: false）" }}
+    </p>
+  </div>
+  <div v-if="s && health?.report" class="card" style="max-width: 640px; margin-top: 14px">
+    <h3>日报</h3>
+    <p class="muted">
+      {{ health.report.enabled ? `每天 ${health.report.at} 生成前一天的日报，下一次 ${health.report.next_run || "?"}` : "已关闭" }}
+      <template v-if="health.report.last"> · 最近生成 {{ health.report.last.day }}（{{ health.report.last.llm }}）</template>
     </p>
   </div>
 </template>

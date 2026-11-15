@@ -9,3 +9,8 @@ numpy==2.2.1
 PyYAML==6.0.2
 pytest==8.3.4
 pytest-asyncio==0.25.0
+grpcio==1.68.1
+grpcio-tools==1.68.1
+protobuf==5.28.3
+mcp==1.2.0
+APScheduler==3.11.0

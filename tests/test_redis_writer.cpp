@@ -207,6 +207,27 @@ TEST_F(RedisWriterTest, StateFieldsAndStateOnlyWrite) {
   EXPECT_EQ(w.write_errors(), 0U);
 }
 
+TEST_F(RedisWriterTest, PredictionFieldsWrittenAndClearedWhenExpired) {
+  StorageQueue q(16);
+  RedisWriter w(q, opt_);
+  const int64_t now = 1'800'000'000'000;
+  auto a = acc("w1", 1, now);
+  a.f_pred = 0.75;
+  a.pred_cpu = 0.85;
+  w.write_batch({a});
+  std::unordered_map<std::string, std::string> h;
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["f_pred"], "0.7500");
+  EXPECT_EQ(h["pred_cpu"], "0.8500");
+  auto b = acc("w1", 2, now + 1000);  // 预测过期：f_pred 回 1，pred_cpu 删除
+  w.write_batch({b});
+  h.clear();
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["f_pred"], "1.0000");
+  EXPECT_EQ(h.count("pred_cpu"), 0U);
+  EXPECT_EQ(w.write_errors(), 0U);
+}
+
 TEST_F(RedisWriterTest, EventsStreamAndForwardToMysql) {
   StorageQueue q(16);
   opt_.events_maxlen = 5;
@@ -216,6 +237,8 @@ TEST_F(RedisWriterTest, EventsStreamAndForwardToMysql) {
   const int64_t now = 1'800'000'000'000;
   auto a = acc("w1", 1, now);
   a.prob = 0.6;
+  a.f_pred = 0.75;
+  a.pred_cpu = 0.85;
   NodeEvent reg;
   reg.node_id = "w1";
   reg.kind = "slow_start";
@@ -236,6 +259,8 @@ TEST_F(RedisWriterTest, EventsStreamAndForwardToMysql) {
   std::unordered_map<std::string, std::string> h;
   redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
   EXPECT_EQ(h["prob"], "0.6000");
+  EXPECT_EQ(h["f_pred"], "0.7500");
+  EXPECT_EQ(h["pred_cpu"], "0.8500");
 
   using Attrs = std::vector<std::pair<std::string, std::string>>;
   std::vector<std::pair<std::string, Attrs>> items;

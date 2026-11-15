@@ -1,4 +1,4 @@
-// manager：接收 Worker 上报，维护节点表与分数，处理 Allocate，写 Redis 热数据。
+// manager：接收 Worker 上报，维护节点表与分数，处理 Allocate，接收 AI 预测（Advisor），写 Redis 热数据。
 // 用法：manager [-c config/manager.yaml]
 // Redis 密码从环境变量 LM_REDIS_PASSWORD 读取（与 deploy/.env 的 REDIS_PASSWORD 对应）；
 // 环境变量 LM_REDIS_URI 非空时覆盖配置里的 redis.uri。
@@ -15,6 +15,7 @@
 #include <grpcpp/grpcpp.h>
 #include <spdlog/spdlog.h>
 
+#include "api/advisor_service.h"
 #include "api/scheduler_service.h"
 #include "api/web_server.h"
 #include "ingest/collector_service.h"
@@ -74,6 +75,7 @@ int main(int argc, char** argv) {
     topt.scoring = lm::manager::ScoringParams::from_config(cfg);
     topt.inflight = lm::manager::InflightParams::from_config(cfg);
     topt.breaker = lm::manager::BreakerParams::from_config(cfg);
+    topt.advisor = lm::manager::AdvisorParams::from_config(cfg);
   } catch (const lm::ConfigError& e) {
     spdlog::critical("{}", e.what());
     return 2;
@@ -116,6 +118,7 @@ int main(int argc, char** argv) {
 
   lm::manager::CollectorService collector(table, queue);
   lm::manager::SchedulerService scheduler(table, {});
+  lm::manager::AdvisorService advisor(table);  // AI 负载预测（M9）
   collector.set_task_sink(task_sink);
   scheduler.set_task_sink(task_sink);
   const std::string listen = cfg.get<std::string>("listen", "0.0.0.0:50051");
@@ -124,6 +127,7 @@ int main(int argc, char** argv) {
   builder.AddListeningPort(listen, grpc::InsecureServerCredentials(), &bound_port);
   builder.RegisterService(&collector);
   builder.RegisterService(&scheduler);
+  builder.RegisterService(&advisor);
   std::unique_ptr<grpc::Server> server = builder.BuildAndStart();
   if (!server || bound_port == 0) {
     spdlog::critical("无法监听 {}", listen);
@@ -198,11 +202,11 @@ int main(int argc, char** argv) {
       spdlog::info(
           "节点 在线 {}/{}（慢启动 {}、正常 {}、剔除 {}、急救 {}），累计接受 {} 条，乱序丢弃 {} 条，存储队列 {}（丢弃 {}），Redis 错误 {}，"
           "分配 {} 次，拒绝 {} 次，在途 {}，作废 {}，未确认 {}，执行超时 {}，迟到事件 {}，"
-          "MySQL 写入 {} 行（错误 {}，队列 {}，丢弃 {}）",
+          "MySQL 写入 {} 行（错误 {}，队列 {}，丢弃 {}），预测批 {}（未知节点 {}）",
           c.online, c.total, c.slow_start, c.normal, c.evicted, c.rescue, collector.accepted(), collector.stale(), queue.size(), queue.dropped(),
           writer.write_errors(), scheduler.allocated(), scheduler.rejected(), t.inflight, t.voided,
           t.unconfirmed, t.exec_timeouts, t.late_events, mwriter.rows_written(), mwriter.errors(),
-          mqueue.size(), mwriter.dropped());
+          mqueue.size(), mwriter.dropped(), advisor.batches(), advisor.unknown_nodes());
       next_report += std::chrono::seconds(10);
     }
   }

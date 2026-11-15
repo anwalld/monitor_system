@@ -1,4 +1,4 @@
-# 部署与环境搭建（M0–M8）
+# 部署与环境搭建（M0–M9）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
@@ -157,6 +157,28 @@ curl -s http://127.0.0.1/api/ai/health
 Redis 里新增 consumer group `ai`（`stream:metrics`、`stream:events` 上）、`ai:settings`、`ai:keys`、`ai:tokens:<日期>`。回滚：`docker compose stop ai`（调度不受影响，看板诊断页和设置页显示“AI 服务不可用”）。
 
 验收工具：`experiments/ai_faults.sh`（在 Worker 上依次注入 CPU、调度延迟、内存、磁盘、网卡、进程停止，记录起止时刻）+ `experiments/ai_eval.py`（检出率、检出延迟、每小时误报）。
+
+### 8. 运维问答、负载预测、日报（M9）
+
+只换镜像（`lm-manager`、`lm-ai`、`lm-web`），`.env` 不用改：
+
+- Manager 新增 `Advisor` gRPC 服务（同一个 50051 端口），`manager.yaml` 新增 `advisor` 段（`enabled`、`min_factor`、`max_ttl_ms`）。`node:{id}` Hash 新增 `f_pred`、`pred_cpu`。
+- AI 服务的预测推送默认关闭（`config/ai.yaml` 的 `predict.push`，打开后推到 `127.0.0.1:50051`，compose 里 `LM_MANAGER_ADDR`，两者都是 host 网络）；Redis 新增 `ai:pred`（10 秒过期）；MySQL 写 `ai_daily_report`。
+- Nginx 新增 `location = /api/ai/chat`：关闭代理缓冲、读超时 300 秒（问答是 SSE）。
+
+```bash
+ssh <user>@<manager机> 'sudo docker tag lm-manager:latest lm-manager:m7; sudo docker tag lm-ai:latest lm-ai:m8; sudo docker tag lm-web:latest lm-web:m8'
+docker build -f deploy/docker/manager.Dockerfile -t lm-manager .
+docker build -f deploy/docker/ai.Dockerfile -t lm-ai .
+docker build -f deploy/docker/web.Dockerfile -t lm-web .
+docker save lm-manager lm-ai lm-web | gzip -1 | ssh <user>@<manager机> 'gunzip | sudo docker load'
+docker compose up -d --no-build manager ai nginx
+curl -s http://127.0.0.1/api/ai/predictions
+```
+
+回滚：给旧标签重新打 `latest` 后 `docker compose up -d --no-build`。预测参与调度的开关：`config/ai.yaml` 的 `predict.push`（默认 false），Manager 侧 `manager.yaml` 的 `advisor.enabled`。两个配置都打在镜像里，改完要重建镜像。
+
+MCP server 和评估脚本要读 Redis/MySQL：在 `deploy/` 下写 `.env.mcp`（`LM_REDIS_URI`、`LM_REDIS_PASSWORD`、`LM_MYSQL_HOST`、`LM_MYSQL_PORT`、`LM_MYSQL_USER`、`LM_MYSQL_DATABASE`、`LM_MYSQL_PASSWORD`，密码与 `.env` 相同，权限 600，不提交）。
 
 ### 停止与清理
 

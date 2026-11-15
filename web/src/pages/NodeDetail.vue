@@ -102,7 +102,7 @@ const pctFmt = (v) => `${Math.round(v * 100)}%`;
       <table style="margin-top: 10px">
         <thead>
           <tr><th>总分</th><th>CPU 分</th><th>调度延迟分</th><th>内存分</th><th>网络分</th><th>慢启动系数</th>
-            <th>在途系数</th><th>超时系数（T）</th><th>选中概率</th></tr>
+            <th>在途系数</th><th>超时系数（T）</th><th>预测系数</th><th>选中概率</th></tr>
         </thead>
         <tbody>
           <tr>
@@ -114,6 +114,7 @@ const pctFmt = (v) => `${Math.round(v * 100)}%`;
             <td class="num">{{ num(node.f_slow, 3) }}</td>
             <td class="num">{{ num(node.inflight.f_inflight, 3) }}（{{ node.inflight.inflight }} 个）</td>
             <td class="num">{{ num(node.inflight.f_timeout, 3) }}（{{ num(node.inflight.timeout_count) }}）</td>
+            <td class="num">{{ num(node.f_pred ?? 1, 3) }}{{ node.pred_cpu == null ? "" : `（预测 ${pct(node.pred_cpu)}）` }}</td>
             <td class="num">{{ pct(node.prob) }}</td>
           </tr>
         </tbody>

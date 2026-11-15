@@ -32,6 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=cfg.log_level.upper(), stream=sys.stderr,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)
     svc = build(cfg)
     if not cfg.api_token:
         logging.getLogger("lmai").warning("LM_API_TOKEN 为空，/api/ai 接口不鉴权")

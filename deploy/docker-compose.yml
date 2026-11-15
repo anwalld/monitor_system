@@ -71,8 +71,8 @@ services:
       redis:
         condition: service_healthy
 
-  # AI 服务（M8）：只读 Redis/MySQL，写 ai_diagnosis 和 stream:events 的 diagnosis 事件。
-  # 停掉它不影响调度；LLM 厂商在看板设置页选择，各厂商 Key 放 .env
+  # AI 服务（M8、M9）：只读 Redis/MySQL，写 ai_diagnosis、ai_daily_report、ai:pred 和 stream:events 的 diagnosis 事件；
+  # 负载预测经 gRPC 推给 Manager（带 10 秒过期）。停掉它不影响调度；LLM 厂商在看板设置页选择，各厂商 Key 放 .env 或设置页
   ai:
     build:
       context: ..
@@ -92,6 +92,8 @@ services:
       LM_MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 deploy/.env 中设置 MYSQL_PASSWORD}
       LM_API_TOKEN: ${API_TOKEN:-}
       LM_AI_LISTEN: 127.0.0.1:${AI_PORT:-8000}
+      # 负载预测（M9）经 Advisor.PushPredictions 推给 Manager（同为 host 网络）
+      LM_MANAGER_ADDR: 127.0.0.1:50051
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
     depends_on:

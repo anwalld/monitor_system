@@ -37,6 +37,10 @@ const stateText = (n) => (n.online ? STATE_LABEL[n.state] || n.state : `${STATE_
         <dt>调度延迟 P99</dt><dd>{{ us(n.runq_p99_us) }}</dd>
         <dt>可用内存</dt><dd>{{ pct(n.mem) }}</dd>
         <dt>在途任务</dt><dd>{{ n.inflight.inflight }}（T {{ num(n.inflight.timeout_count) }}）</dd>
+        <dt>预测 30 秒 CPU</dt>
+        <dd :class="{ warn: n.f_pred != null && n.f_pred < 1 }" title="AI 负载预测（Holt），f_pred < 1 时该节点权重下调">
+          {{ n.pred_cpu == null ? "—" : `${pct(n.pred_cpu)} · f_pred ${num(n.f_pred, 2)}` }}
+        </dd>
         <template v-for="c in n.nics" :key="c.name">
           <dt>{{ c.name }}</dt>
           <dd>{{ num(c.rtt_ms, 1) }} ms · 超时 {{ pct(c.timeout_rate) }}</dd>
