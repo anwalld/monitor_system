@@ -50,7 +50,7 @@
 
 ## LLM
 
-- `ai.yaml` 的 `vendors`：每个厂商 `label`、`base_url`、`models`、`key_env`（`.env` 里的变量名）、`json_mode`（是否支持 `response_format={"type":"json_object"}`）。预置 DeepSeek（`https://api.deepseek.com`，deepseek-chat、deepseek-reasoner）和通义千问（`https://dashscope.aliyuncs.com/compatible-mode/v1`，qwen-plus、qwen-max、qwen-turbo）。`mock` 厂商只在测试配置里出现。
+- `ai.yaml` 的 `vendors`：每个厂商 `label`、`base_url`、`models`、`key_env`（`.env` 里的变量名）、`json_mode`（是否支持 `response_format={"type":"json_object"}`）。预置 DeepSeek（`https://api.deepseek.com`，deepseek-chat；deepseek-reasoner 已去掉，见“实现中的决定”）和通义千问（`https://dashscope.aliyuncs.com/compatible-mode/v1`，qwen-plus、qwen-max、qwen-turbo）。`mock` 厂商只在测试配置里出现。
 - 每次诊断开始时读一次 `ai:settings`（vendor、model），换设置不用重启。
 - `AsyncOpenAI(timeout=30, max_retries=0)`，自己做重试：超时、连接错误、429、5xx 等 1 秒、2 秒后再试，最多重试 2 次。
 - 校验失败（JSON 解析或 pydantic）时把错误追加进对话重试一次，这次重试不计入上面 2 次。
