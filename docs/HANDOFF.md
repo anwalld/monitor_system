@@ -11,14 +11,18 @@
 | M2 内核模块 | `m2-cpustat-kmod` | 17/17 | 790061f | 虚拟机验收通过 |
 | M3 eBPF | `m3-ebpf-runqlat` | 16/16 | 1c64e22 | 虚拟机验收通过 |
 | M4 多网卡 | `m4-multi-nic` | 15/15 | 4c22841 | 虚拟机验收通过 |
-| M5 评分与选择 | `m5a-scoring` | 9/9 | 441c7a8 | 虚拟机验收通过 |
-| M5 任务流程 | `m5b-task-flow` | 12/12 | 441c7a8 | 虚拟机 + Mac 测试容器验收；3 台 Worker 到位后重做 5.4 |
-| M6 节点状态机 | `m6-node-state-machine` | 16/16 | 5170274 | 虚拟机 + Mac 测试容器验收；3 台 Worker 到位后用真关机重做 4.3、4.4 |
+| M5 评分与选择 | `m5a-scoring` | 10/10 | 441c7a8 | 虚拟机验收通过 |
+| M5 任务流程 | `m5b-task-flow` | 14/14 | 441c7a8 | 虚拟机 + Mac 测试容器验收；3 台 Worker 到位后重做 5.4 |
+| M6 节点状态机 | `m6-node-state-machine` | 15/15 | 5170274 | 虚拟机 + Mac 测试容器验收；3 台 Worker 到位后用真关机重做 4.3、4.4 |
 | M7 存储与事件 | `m7a-storage-events` | 10/10 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M7 看板 | `m7b-dashboard` | 8/8 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M8 AI 第一批 | `m8-ai-diagnosis` | 12/12 | fd08f67 | 虚拟机 + Mac 测试节点验收；DeepSeek 真实诊断；`/opsx:verify` 已过 |
 
+- 2026-11-15 对 M1–M8 跑过 `/opsx:verify`：代码与 spec 一致，222 个 C++ 测试（含 Redis/MySQL 集成测试）和 28 个 AI 测试全过；唯一未完成任务是 M1 7.1（要 3 台 Worker）。
 - 十一个变更都没有归档（`openspec/changes/archive/` 为空，`openspec/specs/` 也是空的）。归档顺序有依赖：先 M1 再 M3（M3 的 `manager-hot-storage` 增量依赖 M1 的能力）；先 M7b 再 M8（M8 对 `web-dashboard` 用了 MODIFIED）。M0、M1 有未完成任务，归档前先问用户。
+- **归档时要改的 spec 叠加问题**：后面的变更用 ADDED 加了“自本变更起……”来覆盖前面的说法，直接归档会让主 spec 里新旧两条并存、互相矛盾。要按顺序归档，并在归档前一个后，把后一个里的对应条目改成 MODIFIED：
+  - `manager-allocation`：m5a“候选集合与权重”（四个因子取 1）和“Scheduler.Allocate”（MarkSent 返回 UNIMPLEMENTED）← m5b“选择权重使用在途与超时因子”、m6“候选集合按节点状态”。
+  - `worker-task-exec` / `worker-rescue`：m5b“Probe”里“Rescue 返回 UNIMPLEMENTED”← m6“Rescue 流”。
 - 每个变更的实测数据在各自 `tasks.md`，实现中改过的方案在各自 `design.md` 的「实现中的决定」。
 
 ## 下一步
