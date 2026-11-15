@@ -18,8 +18,10 @@ int64_t mono_us() {
 
 }  // namespace
 
-RescueSession::RescueSession(NodeTable& table, RescueStart start, RescueParams p, StateSink sink)
+RescueSession::RescueSession(NodeTable& table, RescueStart start, RescueParams p, StateSink sink,
+                             RescueEndSink end_sink)
     : table_(table), start_(std::move(start)), p_(p), sink_(std::move(sink)),
+      end_sink_(std::move(end_sink)),
       tracker_(p.timeout_ms * 1000) {}
 
 RescueSession::~RescueSession() {
@@ -67,6 +69,7 @@ void RescueSession::run() {
   uint64_t seq = 0;
   bool writable = true;
   const char* why = "满时长";
+  const char* result = "timeout";
   while (!cancel_.load(std::memory_order_relaxed)) {
     const auto now = std::chrono::steady_clock::now();
     {
@@ -96,12 +99,14 @@ void RescueSession::run() {
       last = table_.rescue_batch(start_.node_id, ok, lm::mono_ms());
       if (!last.found) {
         why = "节点不存在";
+        result = "gone";
         break;
       }
       n = last.candidates;
       tgt = RescueTarget::target_for(target.k(), n, p_.epsilon_factor);
       if (RescueTarget::reached(last.prob, tgt)) {
         why = "达到目标";
+        result = "reached";
         break;
       }
       if (now >= end_by) break;
@@ -109,7 +114,10 @@ void RescueSession::run() {
     }
     std::this_thread::sleep_until(std::min(next_send, next_batch));
   }
-  if (cancel_.load()) why = "被取消";
+  if (cancel_.load()) {
+    why = "被取消";
+    result = "canceled";
+  }
   if (writable) stream->WritesDone();
   ctx.TryCancel();
   reader.join();
@@ -125,6 +133,26 @@ void RescueSession::run() {
       start_.node_id, why, elapsed_ms, st.batches_ok, st.batches_fail, st.sent, st.ok, st.timeouts,
       st.late, st.events, last.prob, tgt, start_.timeout_count, last.timeout_count,
       change ? mode_name(change->to) : "?");
+  if (end_sink_) {  // rescue_end 在随之而来的 slow_start / evict 之前
+    RescueEnd e;
+    e.node_id = start_.node_id;
+    e.ts_ms = lm::wall_ms();
+    e.result = result;
+    e.ms = elapsed_ms;
+    e.batches_ok = st.batches_ok;
+    e.batches_fail = st.batches_fail;
+    e.sent = st.sent;
+    e.ok = st.ok;
+    e.timeouts = st.timeouts;
+    e.late = st.late;
+    e.events = st.events;
+    e.prob = last.prob;
+    e.target = tgt;
+    e.t_before = start_.timeout_count;
+    e.t_after = last.timeout_count;
+    e.to = change ? mode_name(change->to) : "";
+    end_sink_(e);
+  }
   if (change && sink_) sink_(*change);
   done_.store(true);
 }
@@ -133,7 +161,7 @@ void RescueManager::launch(const RescueStart& s) {
   if (sessions_.count(s.node_id) != 0) return;
   spdlog::warn("节点 {} 开始急救：选中概率 {:.3f} < {:.3f}/{}，T {:.3f}", s.node_id, s.prob,
                p_.prob_factor, s.candidates, s.timeout_count);
-  auto sess = std::make_unique<RescueSession>(table_, s, p_, sink_);
+  auto sess = std::make_unique<RescueSession>(table_, s, p_, sink_, end_sink_);
   sess->start();
   sessions_[s.node_id] = std::move(sess);
 }

@@ -38,6 +38,7 @@ struct StateChange {
   int64_t since_wall_ms = 0;
   double f_slow = 1;
   int probe_fail_streak = 0;
+  std::string detail_json;  // 事件附加信息（进入急救时：概率、候选数、T、退避）
 };
 
 // 需要启动的急救。

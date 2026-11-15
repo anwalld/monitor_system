@@ -13,6 +13,7 @@
 #include "breaker/prober.h"
 #include "breaker/rescue_session.h"
 #include "ingest/node_table.h"
+#include "storage/task_rows.h"
 
 namespace lm::manager {
 
@@ -27,6 +28,8 @@ class SchedulerLoop {
                 RescueManager* rescue = nullptr)
       : table_(table), opt_(opt), sink_(std::move(sink)), rescue_(rescue) {}
   ~SchedulerLoop() { stop(); }
+
+  void set_task_sink(TaskSink s) { task_sink_ = std::move(s); }
 
   void start();
   void stop();
@@ -45,6 +48,7 @@ class SchedulerLoop {
   const Options opt_;
   StateSink sink_;
   RescueManager* rescue_;
+  TaskSink task_sink_;
   std::vector<StateChange> changes_;
   std::vector<RescueStart> rescues_;
   int64_t last_second_ms_ = -1;

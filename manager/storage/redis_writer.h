@@ -4,6 +4,8 @@
 //   node:{id}       Hash        最新指标、元信息、分数明细与剔除状态
 //   node:{id}:ts    Sorted Set  每秒样本（压缩 JSON），score = ts_ms，保留 1 小时
 //   stream:metrics  Stream      每秒一条，含这一秒内所有节点的最新样本
+//   stream:events   Stream      状态转移与急救事件（M7），MAXLEN ~ 10000
+// 设置了 MySQL 队列时，把样本摘要、新节点、事件（带 entry id）转给 MySQL 写线程。
 // 写失败只记日志（限频），不重试、不积压。
 
 #include <atomic>
@@ -16,6 +18,7 @@
 
 #include "ingest/node_table.h"
 #include "lm/log.h"
+#include "mysql_writer.h"
 #include "storage_queue.h"
 
 namespace sw::redis {
@@ -38,6 +41,7 @@ class RedisWriter {
     std::chrono::milliseconds stream_interval{1000};
     std::chrono::milliseconds trim_interval{60 * 1000};
     long long stream_maxlen = 100000;
+    long long events_maxlen = 10000;
     std::string key_prefix;            // 测试用，正式环境为空
   };
 
@@ -46,6 +50,7 @@ class RedisWriter {
 
   void start();
   void stop();
+  void set_mysql(MysqlQueue* q) { mysql_ = q; }
 
   // 以下供测试直接驱动，正常由线程循环调用。
   void write_batch(const std::vector<AcceptedSample>& batch);
@@ -56,6 +61,9 @@ class RedisWriter {
 
   // 节点状态字段（state、state_reason、state_since_ms、f_slow、probe_fail_streak）。
   static std::map<std::string, std::string> state_fields(const AcceptedSample& a);
+
+  // 样本摘要（5 分钟聚合用）。
+  static MetricPoint metric_point(const AcceptedSample& a);
 
   // 样本序列化为压缩 JSON（proto 字段名）。
   static std::string to_json(const lm::Sample& s);
@@ -74,6 +82,9 @@ class RedisWriter {
 
   std::map<std::string, std::string> pending_stream_;  // node_id → 这一秒内最新样本 JSON
   std::map<std::string, bool> known_nodes_;            // 需要修剪的节点
+  std::map<std::string, std::pair<std::string, uint32_t>> node_rows_;  // 已转给 MySQL 的地址与核数
+  MysqlQueue* mysql_ = nullptr;
+  void write_events(std::vector<NodeEvent>& evs);
   lm::RateLimiter err_log_{std::chrono::seconds(10)};
   std::atomic<uint64_t> errors_{0};
   std::atomic<bool> running_{false};

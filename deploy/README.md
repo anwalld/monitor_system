@@ -1,4 +1,4 @@
-# 部署与环境搭建（M0–M6）
+# 部署与环境搭建（M0–M7）
 
 环境由 1 台 Manager 机和多台 Worker 机组成：
 
@@ -110,6 +110,34 @@ sudo systemd-run --on-active=5min /usr/sbin/iptables -D INPUT -p tcp --dport 500
 sudo iptables -I INPUT -p tcp --dport 50052 -j DROP   # 灰色故障：约 3 秒后 evicted（probe）
 sudo iptables -D INPUT -p tcp --dport 50052 -j DROP   # 删除后回到 slow_start
 ```
+
+### 6. 冷数据与看板（M7）
+
+compose 给 Manager 传 MySQL 连接参数（`LM_MYSQL_HOST=127.0.0.1`，端口、用户、库名、密码取自 `.env`），并新增 `nginx` 服务（镜像 `lm-web`，由 `deploy/docker/web.Dockerfile` 构建：node 编译看板 → nginx 托管并反代 `/api/`、`/ws` 到 127.0.0.1:8080）。`.env` 可选两项：`API_TOKEN`（为空不鉴权）、`HTTP_PORT`（默认 80）。
+
+拉不到 Docker Hub 时，在开发机上构建好再传：
+
+```bash
+docker build -f deploy/docker/manager.Dockerfile -t lm-manager .
+docker build -f deploy/docker/web.Dockerfile -t lm-web .
+docker save lm-manager lm-web | gzip -1 | ssh <user>@<manager机> 'gunzip | sudo docker load'
+docker compose up -d --no-build manager nginx
+```
+
+验收：
+
+```bash
+set -a; . ./.env; set +a
+docker compose exec mysql mysql -u"${MYSQL_USER:-lm}" -p"$MYSQL_PASSWORD" "${MYSQL_DATABASE:-lm}" -e \
+  'SELECT node_id, bucket_start, ROUND(cpu_avg,3) cpu, samples FROM node_metrics_5m ORDER BY bucket_start DESC LIMIT 6;
+   SELECT node_id, ts, kind, detail FROM node_event ORDER BY id DESC LIMIT 5;
+   SELECT state, COUNT(*) FROM task GROUP BY state'
+docker compose exec redis redis-cli -a "$REDIS_PASSWORD" --no-auth-warning XREVRANGE stream:events + - COUNT 5
+curl -s http://127.0.0.1/api/health
+docker compose logs manager | grep 'MySQL'   # 每 10 秒汇总里有 MySQL 写入行数、错误、队列与丢弃
+```
+
+回滚：`docker tag lm-manager:m6 lm-manager && docker compose up -d --no-build manager`，再 `docker compose stop nginx`。
 
 ### 停止与清理
 

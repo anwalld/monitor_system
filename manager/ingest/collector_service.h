@@ -9,6 +9,7 @@
 #include "monitor.grpc.pb.h"
 #include "node_table.h"
 #include "storage/storage_queue.h"
+#include "storage/task_rows.h"
 
 namespace lm::manager {
 
@@ -21,12 +22,15 @@ class CollectorService final : public lm::Collector::Service {
   grpc::Status OnTaskEvent(grpc::ServerContext* ctx, const lm::TaskEvent* req,
                            lm::Ack* resp) override;
 
+  void set_task_sink(TaskSink s) { task_sink_ = std::move(s); }
+
   uint64_t accepted() const { return accepted_.load(); }
   uint64_t stale() const { return stale_.load(); }
 
  private:
   NodeTable& table_;
   BoundedQueue<AcceptedSample>& queue_;
+  TaskSink task_sink_;
   std::atomic<uint64_t> accepted_{0};
   std::atomic<uint64_t> stale_{0};
 };

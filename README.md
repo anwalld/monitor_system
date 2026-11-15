@@ -37,15 +37,16 @@ kmod/cpustat/ 内核模块：定时把每核空闲时间写进只读共享页（
 bpf/          eBPF 程序：runqlat.bpf.c（调度排队延迟直方图），构建时生成 vmlinux.h 和 skeleton
 common/       环形缓冲、seqlock 读端、配置、日志
 worker/       collector/（CPU、内存、磁盘）  reporter/（每秒上报）  netprobe/（多网卡 ICMP 探测、TCP 重传率、流量）  task/（任务执行服务）  bench/（CPU 读取耗时基准、调度延迟对照工具）  main.cpp
-manager/      ingest/（接收上报、节点表）  scoring/（评分、剔除、加权抽样）  inflight/（在途任务账）  breaker/（节点状态机、低频探测、急救）  api/（Scheduler 服务）  scheduler_loop（100 ms 主循环）  storage/（Redis 热数据）  main.cpp
-experiments/  lm-bench：调试与压测客户端（allocate、submit）
-tests/        GoogleTest 单元测试与 Redis 集成测试
+manager/      ingest/（接收上报、节点表）  scoring/（评分、剔除、加权抽样）  inflight/（在途任务账）  breaker/（节点状态机、低频探测、急救）  api/（Scheduler 服务、看板 REST/WebSocket）  scheduler_loop（100 ms 主循环）  storage/（Redis 热数据、事件流、MySQL 冷数据）  main.cpp
+web/          Vue 3 + Vite + ECharts 看板（总览、节点详情、事件）
+experiments/  lm-bench：调试与压测客户端（allocate、submit）；ws_check.mjs：看板断线重连验收
+tests/        GoogleTest 单元测试与 Redis、MySQL 集成测试
 config/       worker.yaml、manager.yaml 样例
 deploy/       docker-compose、MySQL 表结构、策略路由与自检脚本、systemd、安装脚本
 openspec/     需求规格与按里程碑划分的变更
 ```
 
-后续里程碑会加入 `ai/`、`web/`。
+后续里程碑会加入 `ai/`。
 
 ## 构建
 
@@ -53,7 +54,8 @@ openspec/     需求规格与按里程碑划分的变更
 
 - CMake ≥ 3.20、C++17 编译器
 - gRPC、Protobuf、spdlog、yaml-cpp
-- hiredis（Manager 需要）
+- hiredis、MySQL C 客户端（mariadb-connector-c）、Drogon（Manager 需要；后两者缺少时 MySQL 写入、看板接口编为桩）
+- Node.js 22+（构建看板 `web/`）
 - clang、libbpf-dev、bpftool（Worker 的 eBPF 调度延迟采集需要，仅 Linux；缺少时自动跳过）
 
 redis-plus-plus 和 GoogleTest 找不到时，CMake 会自动下载源码构建。
@@ -112,7 +114,7 @@ cp .env.example .env      # 填写三个密码
 docker compose up -d --build --wait
 ```
 
-compose 会启动 Redis、MySQL 和 Manager。Manager 用 host 网络，gRPC 监听 50051 端口。
+compose 会启动 Redis、MySQL、Manager 和 Nginx。Manager 用 host 网络，gRPC 监听 50051，看板接口监听 8080；Nginx 监听 80（`HTTP_PORT`），浏览器打开 `http://<manager_ip>/` 就是看板。`.env` 里设了 `API_TOKEN` 时，第一次打开 `http://<manager_ip>/#/?token=<API_TOKEN>`，之后浏览器会记住。
 
 ### Worker 机
 
@@ -176,12 +178,39 @@ LM_REDIS_PASSWORD=... ./build/manager/manager -c config/manager.yaml
 - 慢启动：权重从 0.2 线性升到 1，期间不叠加在途降权。
 - 急救：每 1 ms 一条 `Rescue` 请求，最长 10 秒；健康则快速压低超时计数 T，有失败就下调目标、尽快结束。反复急救按 5、10、20 … 60 分钟退避。
 
+### 看板与接口（M7）
+
+| 接口 | 内容 |
+|------|------|
+| `GET /api/nodes`、`/api/nodes/{id}` | 节点实时状态（来自 Manager 内存）：状态、分数明细、选中概率、CPU、P99、内存、在途、各网卡 |
+| `GET /api/nodes/{id}/series?minutes=60&step_s=5` | 最近 1 小时曲线，降采样到每 5 秒一个点（P99 取桶内最大） |
+| `GET /api/events?limit=200`、`/api/nodes/{id}/events` | `stream:events` 里的事件，新的在前 |
+| `GET /api/health` | 不鉴权，返回 Redis 是否可用 |
+| `WS /ws?token=…&since=<事件 id>` | 先补发 since 之后的事件，再发 `snapshot`；之后每秒 `node_update`，事件实时 `event` |
+
+token 放在 `Authorization: Bearer <token>` 或（WebSocket）`?token=`。看板断线后按 1、2、4…30 秒退避重连，带上收到的最大事件 id，按 id 去重。开发看板：`VITE_MANAGER=http://127.0.0.1:8080 npm --prefix web run dev`。验收断线重连：
+
+```bash
+node experiments/ws_check.mjs --url http://<manager_ip> --token <token> --close-after 5 --during '<制造事件的命令>'
+```
+
+### 冷数据（M7）
+
+Manager 另起一个 MySQL 写线程，MySQL 挂掉不影响调度和 Redis：
+
+- `node`：新节点登记；`node_event`：每条事件（detail 里的 `event_id` 就是 `stream:events` 的 entry id）。
+- `node_metrics_5m`：每节点每 5 分钟一行（按墙上时间对齐，桶结束 5 秒后写入；退出时写出未结束的桶）。
+- `task`：分配、MarkSent、收到、完成、超时、作废按 1 秒合并后写入；超时后迟到的完成会把 `timeout` 改成 `done`。
+
+事件种类：`slow_start`（新节点 / 剔除后 / 急救后）、`normal`、`evict`、`rescue_start`、`rescue_end`，写入 `stream:events`（MAXLEN 约 1 万）。
+
 ### 查看数据
 
 ```bash
 redis-cli HGETALL node:<node_id>                         # 最新指标、分数明细（score、s_cpu、s_runq、s_mem、s_net、best_nic）与剔除状态（evicted、evict_reason）
 redis-cli ZRANGE node:<node_id>:ts -5 -1                  # 最近 5 秒样本
 redis-cli XREVRANGE stream:metrics + - COUNT 1            # 最近一秒所有节点
+redis-cli XREVRANGE stream:events + - COUNT 10            # 最近 10 条事件
 ```
 
 ## 里程碑
@@ -195,7 +224,7 @@ redis-cli XREVRANGE stream:metrics + - COUNT 1            # 最近一秒所有�
 | M4 多网卡 | ICMP 探测、TCP 重传率、流量 | 虚拟机验收完成：netem 弱网只让对应网卡变差（RTT +100ms、重传 11%），另一块不受影响 |
 | M5 调度 | 评分、剔除、概率选择、在途账、任务流程、压测客户端 | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：本地 stress 打满时该节点任务占比从约 60% 降到 0，结束后 10 秒内回升，2464 个任务无失败；待 3 台 Worker 重做 |
 | M6 节点状态机 | 熔断、急救、慢启动、退避、低频探测 | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：进程停止 2.7 秒剔除不急救；恢复后进入慢启动、5 分钟回到正常；丢 50052 端口的包 2.9 秒剔除；执行超时触发自动急救，2.2 秒恢复；间歇故障时急救 0.5 秒内发现并结束 |
-| M7 存储与看板 | MySQL 冷数据、REST/WebSocket、Vue 看板 | |
+| M7 存储与看板 | 事件流、MySQL 冷数据、REST/WebSocket、Vue 看板、Nginx | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：每节点每 5 分钟一行（300 样本），超时后迟到的完成改为 done；MySQL 断开 70 秒调度不受影响、恢复后一行不少；看板断线和 Manager 重启后事件不丢不重 |
 | M8–M9 AI | 异常诊断、运维问答、负载预测、日报 | |
 | M10 对照实验 | 与轮询、加权轮询对比 | |
 

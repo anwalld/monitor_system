@@ -10,6 +10,7 @@
 #include <string>
 
 #include "ingest/node_table.h"
+#include "storage/task_rows.h"
 #include "task.grpc.pb.h"
 
 namespace lm::manager {
@@ -28,6 +29,8 @@ class SchedulerService final : public lm::Scheduler::Service {
                         lm::AllocateResp* resp) override;
   grpc::Status MarkSent(grpc::ServerContext* ctx, const lm::TaskRef* req, lm::Ack* resp) override;
 
+  void set_task_sink(TaskSink s) { task_sink_ = std::move(s); }
+
   uint64_t allocated() const { return allocated_.load(); }
   uint64_t rejected() const { return rejected_.load(); }
   const std::string& task_prefix() const { return prefix_; }
@@ -41,6 +44,7 @@ class SchedulerService final : public lm::Scheduler::Service {
   std::atomic<uint64_t> next_seq_{1};
   std::mutex rng_mu_;
   std::mt19937_64 rng_;
+  TaskSink task_sink_;
   std::atomic<uint64_t> allocated_{0};
   std::atomic<uint64_t> rejected_{0};
 };

@@ -21,6 +21,7 @@
 #include "scoring/score.h"
 #include "scoring/scoring_params.h"
 #include "scoring/selector.h"
+#include "storage/events.h"
 
 namespace lm::manager {
 
@@ -38,6 +39,16 @@ struct NodeState {
   bool hinted_runq_missing = false;  // 已提示过“未上报调度延迟”
   bool hinted_net_missing = false;   // 已提示过“没有网卡数据”
   BreakerState br;
+  double prob = 0;  // 最近一次 tick_states 算出的选中概率（非候选为 0）
+};
+
+// 看板用的节点快照（一次加锁拷贝出来，锁外序列化）。
+struct NodeView {
+  NodeState st;
+  int64_t age_ms = 0;
+  bool online = false;
+  double f_slow = 1;
+  InflightSnapshot inflight;
 };
 
 // 一次被接受的上报，交给存储线程写热数据（锁外拷贝出来）。
@@ -60,9 +71,12 @@ struct AcceptedSample {
   int64_t mode_since_wall_ms = 0;
   double f_slow = 1;
   int probe_fail_streak = 0;
+  double prob = 0;
   std::optional<StateChange> change;  // 这条上报引起的状态变化
   // 只写状态字段（状态变化时由调度主循环推送；不写时间序列和流）
   bool state_only = false;
+  bool events_only = false;          // 只有事件（急救结束），不写任何节点字段
+  std::vector<NodeEvent> events;     // 由存储线程 XADD stream:events 并转给 MySQL
   std::string node_id;  // state_only 时使用
 };
 
@@ -160,6 +174,8 @@ class NodeTable {
                                         int64_t now_wall_ms);
   std::optional<NodeMode> mode(const std::string& node_id) const;
   double f_slow(const std::string& node_id, int64_t now_mono_ms) const;
+  // 全部节点的快照（按 node_id 排序）。
+  std::vector<NodeView> views(int64_t now_mono_ms) const;
 
   const Options& options() const { return opt_; }
 

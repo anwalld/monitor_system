@@ -14,13 +14,18 @@
 #include "breaker/prober.h"
 #include "breaker/rescue_logic.h"
 #include "ingest/node_table.h"
+#include "storage/events.h"
 #include "task.grpc.pb.h"
 
 namespace lm::manager {
 
+// 急救结束的统计（在随之而来的状态变化之前调用）。
+using RescueEndSink = std::function<void(const RescueEnd&)>;
+
 class RescueSession {
  public:
-  RescueSession(NodeTable& table, RescueStart start, RescueParams p, StateSink sink);
+  RescueSession(NodeTable& table, RescueStart start, RescueParams p, StateSink sink,
+                RescueEndSink end_sink = {});
   ~RescueSession();
 
   void start();
@@ -38,6 +43,7 @@ class RescueSession {
   const RescueStart start_;
   const RescueParams p_;
   StateSink sink_;
+  RescueEndSink end_sink_;
   mutable std::mutex mu_;
   RescueTracker tracker_;
   std::atomic<bool> done_{false};
@@ -48,8 +54,8 @@ class RescueSession {
 // 管理所有急救会话：同一节点同时最多一个。只在调度主循环线程里调用。
 class RescueManager {
  public:
-  RescueManager(NodeTable& table, RescueParams p, StateSink sink)
-      : table_(table), p_(p), sink_(std::move(sink)) {}
+  RescueManager(NodeTable& table, RescueParams p, StateSink sink, RescueEndSink end_sink = {})
+      : table_(table), p_(p), sink_(std::move(sink)), end_sink_(std::move(end_sink)) {}
   ~RescueManager() { stop(); }
 
   void launch(const RescueStart& s);
@@ -62,6 +68,7 @@ class RescueManager {
   NodeTable& table_;
   const RescueParams p_;
   StateSink sink_;
+  RescueEndSink end_sink_;
   std::map<std::string, std::unique_ptr<RescueSession>> sessions_;
   uint64_t finished_ = 0;
 };

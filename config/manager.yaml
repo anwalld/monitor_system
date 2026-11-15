@@ -54,3 +54,15 @@ breaker:                       # 节点状态机（M6）：慢启动、剔除、
     backoff_min_s: 300         # 急救退避 5、10、20 … 分钟
     backoff_max_s: 3600
     backoff_half_life_s: 86400 # 退避级别的半衰期
+mysql:                         # 冷数据（M7）：5 分钟聚合、事件、任务；挂掉不影响调度
+  enabled: true
+  host: 127.0.0.1              # 环境变量 LM_MYSQL_HOST 可覆盖
+  port: 3306
+  user: lm                     # 密码从环境变量 LM_MYSQL_PASSWORD 读取
+  database: lm
+  queue_capacity: 16384        # MySQL 队列容量，满时丢最旧
+api:                           # 看板接口（M7）：REST + WebSocket /ws，由 Nginx 反代
+  enabled: true
+  listen: 0.0.0.0:8080
+  token: ""                    # 静态 token，环境变量 LM_API_TOKEN 覆盖；为空不鉴权
+  threads: 2

@@ -207,6 +207,75 @@ TEST_F(RedisWriterTest, StateFieldsAndStateOnlyWrite) {
   EXPECT_EQ(w.write_errors(), 0U);
 }
 
+TEST_F(RedisWriterTest, EventsStreamAndForwardToMysql) {
+  StorageQueue q(16);
+  opt_.events_maxlen = 5;
+  RedisWriter w(q, opt_);
+  MysqlQueue mq(1024);
+  w.set_mysql(&mq);
+  const int64_t now = 1'800'000'000'000;
+  auto a = acc("w1", 1, now);
+  a.prob = 0.6;
+  NodeEvent reg;
+  reg.node_id = "w1";
+  reg.kind = "slow_start";
+  reg.ts_ms = now;
+  reg.detail = R"({"from":"new","addr":"10.0.0.1:50052","ncpu":2})";
+  a.events.push_back(reg);
+  AcceptedSample end;  // 急救结束：只有事件，不写节点字段
+  end.events_only = true;
+  end.node_id = "w1";
+  NodeEvent re;
+  re.node_id = "w1";
+  re.kind = "rescue_end";
+  re.ts_ms = now + 1;
+  re.detail = R"({"result":"reached"})";
+  end.events.push_back(re);
+  w.write_batch({a, end});
+
+  std::unordered_map<std::string, std::string> h;
+  redis_->hgetall(k("node:w1"), std::inserter(h, h.begin()));
+  EXPECT_EQ(h["prob"], "0.6000");
+
+  using Attrs = std::vector<std::pair<std::string, std::string>>;
+  std::vector<std::pair<std::string, Attrs>> items;
+  redis_->xrange(k("stream:events"), "-", "+", std::back_inserter(items));
+  ASSERT_EQ(items.size(), 2U);
+  std::map<std::string, std::string> f(items[0].second.begin(), items[0].second.end());
+  EXPECT_EQ(f["node"], "w1");
+  EXPECT_EQ(f["kind"], "slow_start");
+  EXPECT_EQ(f["ts_ms"], std::to_string(now));
+  EXPECT_EQ(f["detail"], reg.detail);
+  std::map<std::string, std::string> f2(items[1].second.begin(), items[1].second.end());
+  EXPECT_EQ(f2["kind"], "rescue_end");
+
+  // 转给 MySQL：样本摘要、新节点行、两条事件（带 entry id，顺序不变）
+  auto out = mq.pop_batch(100, std::chrono::milliseconds(0));
+  std::vector<NodeEvent> evs;
+  int points = 0, nodes = 0;
+  for (auto& it : out) {
+    if (auto* e = std::get_if<NodeEvent>(&it)) evs.push_back(*e);
+    if (std::holds_alternative<MetricPoint>(it)) ++points;
+    if (std::holds_alternative<NodeRow>(it)) ++nodes;
+  }
+  EXPECT_EQ(points, 1);
+  EXPECT_EQ(nodes, 1);
+  ASSERT_EQ(evs.size(), 2U);
+  EXPECT_EQ(evs[0].id, items[0].first);
+  EXPECT_EQ(evs[1].id, items[1].first);
+  EXPECT_EQ(evs[1].kind, "rescue_end");
+
+  // 同一节点地址不变不再发节点行；MAXLEN ~ 5 近似修剪（不会无限增长）
+  for (int i = 0; i < 200; ++i) {
+    AcceptedSample e;
+    e.events_only = true;
+    e.events.push_back(re);
+    w.write_batch({e});
+  }
+  EXPECT_LT(redis_->xlen(k("stream:events")), 200);
+  EXPECT_EQ(w.write_errors(), 0U);
+}
+
 TEST_F(RedisWriterTest, TrimRemovesOlderThanRetention) {
   StorageQueue q(16);
   opt_.ts_retention_ms = 3600 * 1000;

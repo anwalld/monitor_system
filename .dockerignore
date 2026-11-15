@@ -4,3 +4,5 @@ cmake-build-*/
 .git/
 .idea/
 deploy/.env
+web/node_modules/
+web/dist/

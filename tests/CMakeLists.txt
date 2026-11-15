@@ -49,8 +49,8 @@ target_compile_definitions(test_worker PRIVATE LM_FIXTURE_DIR="${CMAKE_CURRENT_S
 
 if(LM_BUILD_MANAGER)
   lm_add_test(test_manager test_node_table.cpp test_storage_queue.cpp test_redis_writer.cpp
-    test_scoring.cpp test_inflight.cpp test_breaker.cpp)
-  target_link_libraries(test_manager PRIVATE lm_manager_ingest lm_manager_storage lm_manager_api)
+    test_scoring.cpp test_inflight.cpp test_breaker.cpp test_cold_storage.cpp test_mysql_writer.cpp test_web_json.cpp)
+  target_link_libraries(test_manager PRIVATE lm_manager_ingest lm_manager_storage lm_manager_api lm_manager_web)
   target_compile_definitions(test_manager PRIVATE LM_CONFIG_DIR="${PROJECT_SOURCE_DIR}/config")
 endif()
 

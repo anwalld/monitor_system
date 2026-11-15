@@ -1,6 +1,7 @@
 #include "node_table.h"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace lm::manager {
 
@@ -70,6 +71,7 @@ NodeTable::Result NodeTable::apply(const lm::Sample& s, std::string_view peer_ip
     out->mode_since_wall_ms = n.br.since_wall_ms;
     out->f_slow = slow_factor(n.br, now_mono_ms, opt_.breaker);
     out->probe_fail_streak = n.br.probe_fail_streak;
+    out->prob = n.prob;
     out->node_id = n.node_id;
     if (inserted) {
       StateChange c;
@@ -308,6 +310,11 @@ void NodeTable::tick_states(int64_t now_mono_ms, int64_t now_wall_ms,
     total += weight(n.score.total, factors_for(n, now_mono_ms, false));
     ++cand;
   }
+  for (auto& [id, n] : nodes_) {
+    n.prob = (total > 0 && eligible(n, now_mono_ms))
+                 ? weight(n.score.total, factors_for(n, now_mono_ms, false)) / total
+                 : 0;
+  }
   if (cand < 1 || !(total > 0)) return;
   const RescueParams& rp = bp.rescue;
   for (auto& [id, n] : nodes_) {
@@ -319,10 +326,18 @@ void NodeTable::tick_states(int64_t now_mono_ms, int64_t now_wall_ms,
     }
     const double p = weight(n.score.total, f) / total;
     if (!(p < rp.prob_factor / cand)) continue;
-    n.br.backoff.trigger(now_mono_ms, rp);
+    const int64_t backoff_ms = n.br.backoff.trigger(now_mono_ms, rp);
     set_mode(n, NodeMode::kRescue, "", now_mono_ms, now_wall_ms, changes);
+    const auto* c = ledger_.node(id);
+    if (changes != nullptr && !changes->empty()) {
+      char buf[160];
+      std::snprintf(buf, sizeof(buf),
+                    "{\"prob\":%.6g,\"candidates\":%d,\"timeout_count\":%.6g,\"backoff_s\":%lld}", p,
+                    cand, c != nullptr ? c->timeout_count : 0.0,
+                    static_cast<long long>(backoff_ms / 1000));
+      changes->back().detail_json = buf;
+    }
     if (rescues != nullptr) {
-      const auto* c = ledger_.node(id);
       rescues->push_back({id, n.addr, cand, p, c != nullptr ? c->timeout_count : 0});
     }
   }
@@ -431,6 +446,24 @@ std::string join_host_port(std::string_view ip, uint16_t port) {
     return "[" + std::string(ip) + "]:" + std::to_string(port);
   }
   return std::string(ip) + ":" + std::to_string(port);
+}
+
+std::vector<NodeView> NodeTable::views(int64_t now_mono_ms) const {
+  std::lock_guard<std::mutex> lk(mu_);
+  std::vector<NodeView> out;
+  out.reserve(nodes_.size());
+  for (const auto& [id, n] : nodes_) {
+    NodeView v;
+    v.st = n;
+    v.age_ms = now_mono_ms - n.last_seen_mono_ms;
+    v.online = v.age_ms <= opt_.online_window_ms;
+    v.f_slow = slow_factor(n.br, now_mono_ms, opt_.breaker);
+    v.inflight = ledger_.snapshot(id);
+    out.push_back(std::move(v));
+  }
+  std::sort(out.begin(), out.end(),
+            [](const NodeView& a, const NodeView& b) { return a.st.node_id < b.st.node_id; });
+  return out;
 }
 
 }  // namespace lm::manager

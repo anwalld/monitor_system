@@ -45,6 +45,17 @@ grpc::Status CollectorService::Report(grpc::ServerContext* ctx, const lm::Sample
           spdlog::info("节点 {} 状态 {} → {}", c.node_id, mode_name(c.from), mode_name(c.to));
         }
       }
+      // 事件：新节点登记、上报引起的状态变化（剔除 → 慢启动等），由存储线程写 stream:events
+      if (acc.new_node) {
+        StateChange reg;
+        reg.node_id = req->node_id();
+        reg.since_wall_ms = acc.recv_wall_ms;
+        acc.events = events_from_change(reg, acc.addr, acc.ncpu);
+      }
+      if (acc.change && acc.change->from != acc.change->to) {
+        auto evs = events_from_change(*acc.change);
+        acc.events.insert(acc.events.end(), evs.begin(), evs.end());
+      }
       queue_.push(std::move(acc));  // 锁外入队
       break;
     case NodeTable::Result::kStale:
@@ -63,6 +74,16 @@ grpc::Status CollectorService::OnTaskEvent(grpc::ServerContext* /*ctx*/, const l
   }
   if (req->task_id().empty()) return {grpc::StatusCode::INVALID_ARGUMENT, "task_id 不能为空"};
   const auto r = table_.on_event(req->task_id(), req->kind(), lm::mono_ms());
+  if (task_sink_) {
+    // 迟到的也发：在途账已结算，但 task 表要更新（timeout → done）
+    TaskChange c;
+    c.task_id = req->task_id();
+    c.ts_ms = lm::wall_ms();
+    c.kind = req->kind() == lm::TaskEvent::RECEIVED ? TaskKind::kReceived
+             : req->kind() == lm::TaskEvent::DONE   ? TaskKind::kDone
+                                                    : TaskKind::kFailed;
+    task_sink_(std::move(c));
+  }
   if (r == InflightLedger::EventResult::kLate) {
     // 迟到或未知的事件只计数（M7 用它更新 task 表），Worker 不需要知道
     spdlog::debug("迟到的任务事件 {} {}", req->task_id(), lm::TaskEvent::Kind_Name(req->kind()));

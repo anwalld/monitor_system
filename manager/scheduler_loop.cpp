@@ -47,7 +47,15 @@ void SchedulerLoop::tick_once(int64_t now_mono_ms) {
   }
   // 锁外打日志
   uint64_t skipped = 0;
+  const int64_t now_wall = expired_.empty() ? 0 : lm::wall_ms();
   for (const auto& e : expired_) {
+    if (task_sink_) {
+      TaskChange c;
+      c.task_id = e.task_id;
+      c.kind = e.kind == InflightLedger::Expired::Kind::kVoided ? TaskKind::kVoid : TaskKind::kTimeout;
+      c.ts_ms = now_wall;
+      task_sink_(std::move(c));
+    }
     switch (e.kind) {
       case InflightLedger::Expired::Kind::kVoided:
         voided_.fetch_add(1, std::memory_order_relaxed);

@@ -6,7 +6,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build git ca-certificates pkg-config \
         libgrpc++-dev protobuf-compiler-grpc libprotobuf-dev protobuf-compiler \
-        libspdlog-dev libyaml-cpp-dev libhiredis-dev \
+        libspdlog-dev libyaml-cpp-dev libhiredis-dev libmariadb-dev \
+        libdrogon-dev libjsoncpp-dev uuid-dev zlib1g-dev libpq-dev libsqlite3-dev libbrotli-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY CMakeLists.txt ./
@@ -25,11 +26,11 @@ FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgrpc++1.51t64 libgrpc29t64 libprotobuf32t64 libabsl20220623t64 libre2-10 libcares2 \
-        libspdlog1.12 libfmt9 libyaml-cpp0.8 libhiredis1.1.0 libssl3t64 zlib1g ca-certificates \
+        libspdlog1.12 libfmt9 libyaml-cpp0.8 libhiredis1.1.0 libmariadb3 libdrogon1t64 libssl3t64 zlib1g ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --no-create-home lm
 COPY --from=build /src/build/manager/manager /usr/local/bin/manager
 COPY config/manager.yaml /etc/lm/manager.yaml
 USER lm
-EXPOSE 50051
+EXPOSE 50051 8080
 ENTRYPOINT ["/usr/local/bin/manager", "-c", "/etc/lm/manager.yaml"]

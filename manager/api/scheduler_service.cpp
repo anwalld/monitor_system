@@ -41,6 +41,15 @@ grpc::Status SchedulerService::Allocate(grpc::ServerContext* /*ctx*/, const lm::
             "没有可用节点：总数 " + std::to_string(r.total) + "，剔除 " + std::to_string(r.evicted) +
                 "，失联 " + std::to_string(r.lost)};
   }
+  if (task_sink_) {
+    TaskChange c;
+    c.task_id = task_id;
+    c.node_id = r.pick->node_id;
+    c.input_bytes = req->input_bytes();
+    c.kind = TaskKind::kAllocated;
+    c.ts_ms = lm::wall_ms();
+    task_sink_(std::move(c));
+  }
   resp->set_task_id(std::move(task_id));
   resp->set_worker_addr(r.pick->addr);
   allocated_.fetch_add(1, std::memory_order_relaxed);
@@ -55,6 +64,13 @@ grpc::Status SchedulerService::MarkSent(grpc::ServerContext* /*ctx*/, const lm::
   if (req->task_id().empty()) return {grpc::StatusCode::INVALID_ARGUMENT, "task_id 不能为空"};
   if (table_.mark_sent(req->task_id(), lm::mono_ms()) == InflightLedger::MarkResult::kNotFound) {
     return {grpc::StatusCode::NOT_FOUND, "未知任务 " + req->task_id()};
+  }
+  if (task_sink_) {
+    TaskChange c;
+    c.task_id = req->task_id();
+    c.kind = TaskKind::kSent;
+    c.ts_ms = lm::wall_ms();
+    task_sink_(std::move(c));
   }
   return grpc::Status::OK;
 }

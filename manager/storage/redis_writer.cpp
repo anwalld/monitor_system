@@ -87,11 +87,62 @@ void RedisWriter::on_error(const char* what, const std::exception& e) {
   }
 }
 
+MetricPoint RedisWriter::metric_point(const AcceptedSample& a) {
+  MetricPoint p;
+  const lm::Sample& s = a.sample;
+  p.node_id = s.node_id();
+  p.ts_ms = a.recv_wall_ms;
+  p.cpu = s.cpu_busy();
+  if (s.has_runq_p99_us()) p.runq_p99_us = s.runq_p99_us();
+  p.mem = s.mem_avail_ratio();
+  if (s.nics_size() > 0) {
+    double rtt = 0, to = 0, rt = 0;
+    for (const auto& n : s.nics()) {
+      rtt += n.rtt_ms();
+      to += n.timeout_rate();
+      rt += n.retrans_rate();
+    }
+    const double k = s.nics_size();
+    p.rtt_ms = rtt / k;
+    p.timeout_rate = to / k;
+    p.retrans_rate = rt / k;
+  }
+  p.score = a.score.total;
+  return p;
+}
+
+void RedisWriter::write_events(std::vector<NodeEvent>& evs) {
+  for (auto& e : evs) {
+    try {
+      const std::vector<std::pair<std::string, std::string>> fields = {
+          {"node", e.node_id}, {"kind", e.kind}, {"ts_ms", std::to_string(e.ts_ms)},
+          {"detail", e.detail.empty() ? "{}" : e.detail}};
+      e.id = redis_->xadd(key("stream:events"), "*", fields.begin(), fields.end(),
+                          opt_.events_maxlen, true);
+    } catch (const sw::redis::Error& ex) {
+      on_error("XADD stream:events", ex);
+    }
+    if (mysql_ != nullptr) mysql_->push(e);
+  }
+}
+
 void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
   if (batch.empty()) return;
+  std::vector<NodeEvent> events;
+  for (const auto& a : batch) {
+    events.insert(events.end(), a.events.begin(), a.events.end());
+    if (mysql_ == nullptr || a.state_only || a.events_only) continue;
+    mysql_->push(metric_point(a));
+    auto& known = node_rows_[a.sample.node_id()];
+    if (known.first != a.addr || known.second != a.ncpu) {
+      known = {a.addr, a.ncpu};
+      mysql_->push(NodeRow{a.sample.node_id(), a.addr, a.ncpu, a.recv_wall_ms});
+    }
+  }
   try {
     auto pipe = redis_->pipeline(false);
     for (const auto& a : batch) {
+      if (a.events_only) continue;
       if (a.state_only) {
         // 状态变化：只写状态字段，不写时间序列与流（失联节点也能看到状态变成 evicted）
         const auto f = state_fields(a);
@@ -124,6 +175,7 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
           {"f_inflight", fmt_float(static_cast<float>(a.inflight.f_inflight))},
           {"f_timeout", fmt_float(static_cast<float>(a.inflight.f_timeout))},
           {"timeout_count", fmt_float(static_cast<float>(a.inflight.timeout_count))},
+          {"prob", fmt_float(static_cast<float>(a.prob))},
       };
       for (auto& kv : state_fields(a)) fields.insert(std::move(kv));
       // 调度延迟（M3）：Worker 三个字段同时设置或同时不设置。未上报时删掉旧值，避免读到过时的 P99
@@ -144,6 +196,7 @@ void RedisWriter::write_batch(const std::vector<AcceptedSample>& batch) {
   } catch (const sw::redis::Error& e) {
     on_error("写入", e);
   }
+  write_events(events);  // 事件单独 XADD，取回 entry id 再转给 MySQL
 }
 
 void RedisWriter::flush_stream(int64_t now_wall_ms) {

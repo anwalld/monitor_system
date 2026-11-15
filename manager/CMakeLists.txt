@@ -46,15 +46,33 @@ add_library(lm_manager_ingest STATIC
   breaker/rescue_logic.cpp
   breaker/node_state.cpp
   inflight/inflight_ledger.cpp
+  storage/events.cpp
+  storage/metrics_agg.cpp
+  storage/task_rows.cpp
   ingest/node_table.cpp
   ingest/collector_service.cpp)
 target_include_directories(lm_manager_ingest PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_manager_ingest PUBLIC lm_common lm_proto lm_manager_scoring)
 
+# MySQL C 客户端库（M7）：mariadb-connector-c（Ubuntu libmariadb-dev，macOS Homebrew）；找不到时 MySQL 写线程为桩
+find_path(LM_MYSQL_INCLUDE_DIR NAMES mysql.h PATH_SUFFIXES mysql mariadb
+  HINTS /opt/homebrew/opt/mariadb-connector-c/include /opt/homebrew/include /usr/local/include /usr/include)
+find_library(LM_MYSQL_LIBRARY NAMES mysqlclient mariadb
+  HINTS /opt/homebrew/opt/mariadb-connector-c/lib/mariadb /opt/homebrew/lib /usr/local/lib /usr/lib)
 add_library(lm_manager_storage STATIC
-  storage/redis_writer.cpp)
+  storage/redis_writer.cpp
+  storage/mysql_client.cpp
+  storage/mysql_writer.cpp)
 target_include_directories(lm_manager_storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_manager_storage PUBLIC lm_manager_ingest ${LM_REDISPP_TARGET})
+if(LM_MYSQL_INCLUDE_DIR AND LM_MYSQL_LIBRARY)
+  message(STATUS "MySQL 客户端：${LM_MYSQL_LIBRARY}（${LM_MYSQL_INCLUDE_DIR}）")
+  target_include_directories(lm_manager_storage PRIVATE ${LM_MYSQL_INCLUDE_DIR})
+  target_compile_definitions(lm_manager_storage PRIVATE LM_HAVE_MYSQL LM_MYSQL_HEADER=<mysql.h>)
+  target_link_libraries(lm_manager_storage PUBLIC ${LM_MYSQL_LIBRARY})
+else()
+  message(STATUS "MySQL 客户端：未找到，MySQL 冷数据写入编为桩")
+endif()
 
 add_library(lm_manager_api STATIC
   api/scheduler_service.cpp
@@ -64,5 +82,20 @@ add_library(lm_manager_api STATIC
 target_include_directories(lm_manager_api PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(lm_manager_api PUBLIC lm_manager_ingest)
 
+# 看板接口（M7）：Drogon（Ubuntu libdrogon-dev，macOS Homebrew drogon）；找不到时 Web 服务编为桩
+find_package(Drogon CONFIG QUIET)
+add_library(lm_manager_web STATIC
+  api/web_json.cpp
+  api/web_server.cpp)
+target_include_directories(lm_manager_web PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(lm_manager_web PUBLIC lm_manager_storage)
+if(Drogon_FOUND)
+  message(STATUS "Drogon：${Drogon_VERSION}")
+  target_compile_definitions(lm_manager_web PRIVATE LM_HAVE_DROGON)
+  target_link_libraries(lm_manager_web PRIVATE Drogon::Drogon)
+else()
+  message(STATUS "Drogon：未找到，看板接口编为桩")
+endif()
+
 add_executable(manager main.cpp)
-target_link_libraries(manager PRIVATE lm_manager_ingest lm_manager_storage lm_manager_api)
+target_link_libraries(manager PRIVATE lm_manager_ingest lm_manager_storage lm_manager_api lm_manager_web)
