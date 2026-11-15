@@ -17,7 +17,7 @@
 | M7 存储与事件 | `m7a-storage-events` | 10/10 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M7 看板 | `m7b-dashboard` | 8/8 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M8 AI 第一批 | `m8-ai-diagnosis` | 12/12 | fd08f67 | 虚拟机 + Mac 测试节点验收；DeepSeek 真实诊断；`/opsx:verify` 已过 |
-| M9 AI 第二批 | `m9-ai-ops` | 20/20 | M9_COMMIT | 虚拟机 + Mac 测试节点验收；DeepSeek 问答 20/20、日报数字一致；预测未优于基线，推送默认关闭 |
+| M9 AI 第二批 | `m9-ai-ops` | 20/20 | 1e87511 | 虚拟机 + Mac 测试节点验收；DeepSeek 问答 20/20、日报数字一致；预测未优于基线，推送默认关闭 |
 
 - 2026-11-15 对 M1–M8 跑过 `/opsx:verify`：代码与 spec 一致，222 个 C++ 测试（含 Redis/MySQL 集成测试）和 28 个 AI 测试全过；唯一未完成任务是 M1 7.1（要 3 台 Worker）。
 - 十二个变更都没有归档（`openspec/changes/archive/` 为空，`openspec/specs/` 也是空的）。归档顺序有依赖：先 M1 再 M3（M3 的 `manager-hot-storage` 增量依赖 M1 的能力）；先 M7b 再 M8、M9（M8、M9 对 `web-dashboard` 用了 MODIFIED）。M0、M1 有未完成任务，归档前先问用户。
