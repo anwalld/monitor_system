@@ -94,7 +94,7 @@ docker build -f deploy/docker/manager.Dockerfile -t lm-manager . && docker save 
   - 任务服务已开启：白名单 /bin/sleep、/usr/bin/stress、/bin/grep、/bin/sh，随机 token 在配置文件里（640 root:lm）。Mac 上取 token：`ssh ubuntu@172.16.255.133 'sudo grep token: /etc/lm/worker.yaml'`。
 - **cpustat 模块**：源码在 `/opt/lm/kmod/cpustat`，模块在 `/lib/modules/6.8.0-149-generic/extra/`。开机由 `/etc/modules-load.d/cpustat.conf` 加载，udev 规则是 `/etc/udev/rules.d/99-cpustat.rules`。
 - **compose 项目 `lm`**：在 `~/lm/deploy`，跑着 redis、mysql、manager（M7 版本镜像；回滚用的旧镜像标签 `lm-manager:m6`、`m5`、`m5a`、`m3`）。密码是随机生成的，在 `~/lm/deploy/.env`（没有 `API_TOKEN`，所以看板接口不鉴权）。
-  - M7 部署时 `docker-compose.yml` 换成了仓库里的新版（manager 多了 MySQL 与 token 环境变量，新增 `nginx` 服务定义），原文件备份为 `docker-compose.yml.m6.bak`。**`nginx` 服务没有启动**（只重建了 manager），`lm-web` 镜像已 load 到虚拟机；要开看板就 `sudo docker compose up -d --no-build nginx`（占 80 端口），这一步留给用户决定。
+  - M7 部署时 `docker-compose.yml` 换成了仓库里的新版（manager 多了 MySQL 与 token 环境变量，新增 `nginx` 服务定义），原文件备份为 `docker-compose.yml.m6.bak`。`nginx` 服务已按用户要求启动（2026-11-15，host 网络 80 端口），看板在 http://172.16.255.133/ 。
 - **策略路由**：目前未启用。`/opt/lm/deploy/policy-route.conf` 写的是 `ens160` 和 `ens192 172.16.13.1`。
 - **已装的软件**：stress、fio、docker、Worker 运行时库（含 libbpf1）、build-essential、linux-headers、bpfcc-tools（runqlat-bpfcc）、linux-tools（perf、bpftool）。
 
