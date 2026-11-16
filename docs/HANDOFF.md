@@ -18,7 +18,7 @@
 | M7 看板 | `m7b-dashboard` | 8/8 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M8 AI 第一批 | `m8-ai-diagnosis` | 12/12 | fd08f67 | 虚拟机 + Mac 测试节点验收；DeepSeek 真实诊断；`/opsx:verify` 已过 |
 | M9 AI 第二批 | `m9-ai-ops` | 20/20 | 1e87511 | 虚拟机 + Mac 测试节点验收；DeepSeek 问答 20/20、日报数字一致；预测未优于基线，推送默认关闭 |
-| M10 对照实验 | `m10-comparison` | 11/11 | 见 git log | 三节点（虚拟机 + 2 个限 2 核容器）四组 × 10 轮；本系统约 6 秒避开干扰节点，干扰期 P99 低约 24% 但不显著；撞 Worker 并发上限导致失败更多；预测无作用。待十几台 Worker 重跑 |
+| M10 对照实验 | `m10-comparison` | 11/11 | 598191d | 三节点（虚拟机 + 2 个限 2 核容器）四组 × 10 轮；本系统约 6 秒避开干扰节点，干扰期 P99 低约 24% 但不显著；撞 Worker 并发上限导致失败更多；预测无作用。待十几台 Worker 重跑 |
 
 - `/opsx:verify`：M1–M8 于 11-15 跑过，M9 于 11-16 跑过，代码与 spec 一致。M9 verify 提出的 4 条警告、2 条建议都已处理（见 M9 design「实现中的决定」末尾）。
 - **归档（2026-11-16）**：按 M0 → M9 的顺序全部归档。归档前把后面变更里“自本变更起……”覆盖前面说法的 ADDED 条目改成了 MODIFIED（m5b、m6、m9 的 `manager-allocation`「候选集合与权重」与「Scheduler.Allocate」，m6 的 `worker-task-exec`「Probe」），主 spec 里每条需求只有一个当前说法；`openspec validate --specs` 30 项全过（`worker-task-exec` 有一条“需求文字过长”的提示，历史遗留）。
