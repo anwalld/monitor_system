@@ -100,6 +100,8 @@ docker run --rm -v "$PWD":/src -w /src lm-builder bash -c \
 | `LM_ENABLE_BPF` | AUTO | 编译 eBPF 程序。AUTO：Linux 上找到 clang、bpftool、libbpf 和 BTF 时启用；ON：缺少时报错；OFF：不编译 |
 | `LM_VMLINUX_BTF` | `/sys/kernel/btf/vmlinux` | 生成 `vmlinux.h` 用的 BTF 文件 |
 
+CI（`.github/workflows/ci.yml`）在每个 PR 和 main 的推送上跑三项：lm-builder 镜像里构建并跑全部单元测试（起 Redis、MySQL 容器，集成测试不跳过）、AI 服务 pytest、看板 `npm run build`。
+
 Redis 集成测试需要设置环境变量 `LM_TEST_REDIS_URI=tcp://host:6379`（有密码时再设 `LM_TEST_REDIS_PASSWORD`），否则跳过。
 
 ## 运行

@@ -1,0 +1,101 @@
+# CI：C++（Worker、Manager、单元测试 + Redis/MySQL 集成测试）、AI 服务 pytest、看板构建。
+# C++ 在与本地相同的 lm-builder 镜像里构建（deploy/docker/builder.Dockerfile），镜像层用 GitHub Actions 缓存。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp:
+    name: C++ 构建与测试
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建 lm-builder 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/builder.Dockerfile
+          tags: lm-builder:ci
+          load: true
+          cache-from: type=gha,scope=lm-builder
+          cache-to: type=gha,scope=lm-builder,mode=max
+
+      - name: 启动 Redis 与 MySQL（集成测试用）
+        run: |
+          docker run -d --name lmtest-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+          docker run -d --name lmtest-mysql -p 127.0.0.1:3306:3306 \
+            -e MYSQL_ROOT_PASSWORD=ci-root -e MYSQL_DATABASE=lm -e MYSQL_USER=lm -e MYSQL_PASSWORD=ci-pass \
+            -v "$PWD/deploy/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro" mysql:8.0
+          for i in $(seq 1 90); do
+            if docker exec lmtest-mysql mysql -ulm -pci-pass -h127.0.0.1 -e 'SELECT 1' lm >/dev/null 2>&1; then
+              echo "MySQL 就绪（${i}×2 秒）"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs lmtest-mysql | tail -30
+          exit 1
+
+      - name: 构建并运行测试
+        run: |
+          docker run --rm --network host -v "$PWD":/src -w /src \
+            -e LM_TEST_REDIS_URI=tcp://127.0.0.1:6379 \
+            -e LM_TEST_MYSQL_HOST=127.0.0.1 -e LM_TEST_MYSQL_PORT=3306 \
+            -e LM_TEST_MYSQL_USER=lm -e LM_TEST_MYSQL_PASSWORD=ci-pass \
+            lm-builder:ci bash -c '
+              set -e
+              cmake -S . -B build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              cmake --build build-ci
+              ctest --test-dir build-ci --output-on-failure
+            '
+
+  ai:
+    name: AI 服务测试
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建 lm-ai 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/ai.Dockerfile
+          tags: lm-ai:ci
+          load: true
+          cache-from: type=gha,scope=lm-ai
+          cache-to: type=gha,scope=lm-ai,mode=max
+
+      - name: pytest
+        run: docker run --rm lm-ai:ci python -m pytest -q
+
+  web:
+    name: 看板构建
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - run: npm run build
+        working-directory: web
