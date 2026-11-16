@@ -18,6 +18,7 @@
 #include <linux/module.h>
 #include <linux/tick.h>
 #include <linux/uaccess.h>
+#include <linux/version.h>
 #include <linux/vmalloc.h>
 
 #include "cpustat_uapi.h"
@@ -149,8 +150,13 @@ static int __init cpustat_init(void)
 	interval_ns = default_interval_ns;
 	refresh(); /* 设备出现时就有数据 */
 
+	/* 6.13 起有 hrtimer_setup，6.15 删除了 hrtimer_init */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
+	hrtimer_setup(&timer, on_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
+#else
 	hrtimer_init(&timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL_SOFT);
 	timer.function = on_timer;
+#endif
 	hrtimer_start(&timer, ns_to_ktime(interval_ns), HRTIMER_MODE_REL_SOFT);
 
 	ret = misc_register(&cpustat_dev);

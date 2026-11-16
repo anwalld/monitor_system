@@ -71,7 +71,7 @@ jobs:
 
       - name: 构建并运行测试
         run: |
-          docker run --rm --network host --device /dev/cpustat -v "$PWD":/src -w /src \
+          docker run --rm --init --network host --device /dev/cpustat -v "$PWD":/src -w /src \
             -e LM_TEST_REDIS_URI=tcp://127.0.0.1:6379 \
             -e LM_TEST_MYSQL_HOST=127.0.0.1 -e LM_TEST_MYSQL_PORT=3306 \
             -e LM_TEST_MYSQL_USER=lm -e LM_TEST_MYSQL_PASSWORD=ci-pass \
@@ -111,7 +111,7 @@ jobs:
 
       - name: TSan 构建并运行测试
         run: |
-          docker run --rm -v "$PWD":/src -w /src lm-builder:ci bash -c '
+          docker run --rm --init -v "$PWD":/src -w /src lm-builder:ci bash -c '
             set -e
             cmake -S . -B build-ci-tsan -G Ninja -DLM_ENABLE_TSAN=ON -DLM_ENABLE_BPF=OFF
             cmake --build build-ci-tsan

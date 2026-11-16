@@ -66,9 +66,19 @@ TEST(TaskRunner, TimeoutKillsWholeGroup) {
   pid_t bg = 0;
   f >> bg;
   ASSERT_GT(bg, 0);
+  // 父进程被杀后后台 sleep 被过继给 1 号进程（或子收割者）；容器里的 1 号进程可能不回收，
+  // 被杀的进程会停在僵尸状态，kill(pid, 0) 仍然成功，所以僵尸也算已结束
+  auto dead = [](pid_t p) {
+    if (::kill(p, 0) != 0) return true;
+    std::ifstream st("/proc/" + std::to_string(p) + "/stat");
+    std::string line;
+    std::getline(st, line);
+    const auto rp = line.rfind(')');
+    return rp != std::string::npos && rp + 2 < line.size() && line[rp + 2] == 'Z';
+  };
   bool gone = false;
   for (int i = 0; i < 50 && !gone; ++i) {
-    gone = ::kill(bg, 0) != 0;
+    gone = dead(bg);
     if (!gone) std::this_thread::sleep_for(std::chrono::milliseconds(20));
   }
   EXPECT_TRUE(gone) << "后台 sleep 仍在运行";
