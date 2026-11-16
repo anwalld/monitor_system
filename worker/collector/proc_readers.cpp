@@ -6,7 +6,10 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
+#include <ctime>
+#include <stdexcept>
 #include <vector>
 
 namespace lm::worker {
@@ -190,6 +193,99 @@ std::optional<double> DiskReader::update(const std::map<std::string, uint64_t>& 
   prev_ticks_ = ticks;
   prev_ms_ = now_ms;
   return std::clamp(best, 0.0, 1.0);
+}
+
+std::optional<double> parse_cpu_max(std::string_view text) {
+  std::string t(text);
+  char quota[32] = {0};
+  unsigned long long period = 0;
+  if (std::sscanf(t.c_str(), "%31s %llu", quota, &period) != 2 || period == 0) return std::nullopt;
+  if (std::string_view(quota) == "max") return std::nullopt;
+  char* end = nullptr;
+  const double q = std::strtod(quota, &end);
+  if (end == quota || !(q > 0)) return std::nullopt;
+  return q / static_cast<double>(period);
+}
+
+unsigned parse_cpuset_count(std::string_view text) {
+  unsigned n = 0;
+  std::string t(text);
+  while (!t.empty() && (t.back() == '\n' || t.back() == ' ')) t.pop_back();
+  if (t.empty()) return 0;
+  std::size_t pos = 0;
+  while (pos <= t.size()) {
+    const std::size_t comma = std::min(t.find(',', pos), t.size());
+    const std::string part = t.substr(pos, comma - pos);
+    unsigned a = 0;
+    unsigned b = 0;
+    if (std::sscanf(part.c_str(), "%u-%u", &a, &b) == 2) {
+      if (b < a) return 0;
+      n += b - a + 1;
+    } else if (std::sscanf(part.c_str(), "%u", &a) == 1) {
+      ++n;
+    } else {
+      return 0;
+    }
+    pos = comma + 1;
+  }
+  return n;
+}
+
+std::optional<uint64_t> parse_cpu_usage_usec(std::string_view text) {
+  const std::string_view key = "usage_usec ";
+  for (std::size_t pos = 0; pos < text.size();) {
+    std::size_t eol = text.find('\n', pos);
+    if (eol == std::string_view::npos) eol = text.size();
+    const std::string_view line = text.substr(pos, eol - pos);
+    if (line.substr(0, key.size()) == key) {
+      return std::strtoull(std::string(line.substr(key.size())).c_str(), nullptr, 10);
+    }
+    pos = eol + 1;
+  }
+  return std::nullopt;
+}
+
+namespace {
+bool read_small(const std::string& path, std::string& out) {
+  ProcFile f(path);
+  return f.read(out);
+}
+}  // namespace
+
+CgroupCpuSource::CgroupCpuSource(const std::string& dir) : stat_(dir + "/cpu.stat") {
+  std::string txt;
+  if (!stat_.read(buf_) || !parse_cpu_usage_usec(buf_)) {
+    throw std::runtime_error("读不到 " + dir + "/cpu.stat 的 usage_usec（需要 cgroup v2）");
+  }
+  std::optional<double> q;
+  if (read_small(dir + "/cpu.max", txt)) q = parse_cpu_max(txt);
+  if (!q) {
+    unsigned c = 0;
+    if (read_small(dir + "/cpuset.cpus.effective", txt)) c = parse_cpuset_count(txt);
+    if (c == 0) {
+      const long sc = ::sysconf(_SC_NPROCESSORS_ONLN);
+      c = sc > 0 ? static_cast<unsigned>(sc) : 1;
+    }
+    q = static_cast<double>(c);
+  }
+  q_ = *q;
+  n_ = std::max(1U, static_cast<unsigned>(std::ceil(q_ - 1e-9)));
+}
+
+bool CgroupCpuSource::read(CpuSnapshot& out) {
+  if (!stat_.read(buf_)) return false;
+  const auto usage = parse_cpu_usage_usec(buf_);
+  if (!usage) return false;
+  timespec ts{};
+  ::clock_gettime(CLOCK_MONOTONIC, &ts);
+  const uint64_t now_us = static_cast<uint64_t>(ts.tv_sec) * 1000000ULL +
+                          static_cast<uint64_t>(ts.tv_nsec) / 1000ULL;
+  const double busy_us = static_cast<double>(*usage) / q_;
+  const uint64_t idle =
+      busy_us >= static_cast<double>(now_us) ? 0 : now_us - static_cast<uint64_t>(busy_us);
+  out.cores.clear();
+  for (unsigned i = 0; i < n_; ++i) out.cores.push_back({i, idle, now_us});
+  return true;
 }
 
 }  // namespace lm::worker

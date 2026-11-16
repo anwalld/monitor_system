@@ -8,7 +8,8 @@ service Scheduler {                    // 客户端 → Manager
   rpc Allocate(AllocateReq) returns (AllocateResp);
   rpc MarkSent(TaskRef) returns (Ack);
 }
-message AllocateReq  { string client_id = 1; uint64 input_bytes = 2; string kind = 3; }
+message AllocateReq  { string client_id = 1; uint64 input_bytes = 2; string kind = 3;
+                        string policy = 4; }  // M10：""/score、score_nopred、rr、wrr
 message AllocateResp { string task_id = 1; string worker_addr = 2; }
 message TaskRef      { string task_id = 1; }
 

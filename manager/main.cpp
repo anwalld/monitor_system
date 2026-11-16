@@ -117,7 +117,9 @@ int main(int argc, char** argv) {
   }
 
   lm::manager::CollectorService collector(table, queue);
-  lm::manager::SchedulerService scheduler(table, {});
+  lm::manager::SchedulerService::Options sopt;
+  sopt.allow_policy = cfg.get<bool>("allocation.allow_policy", true);
+  lm::manager::SchedulerService scheduler(table, sopt);
   lm::manager::AdvisorService advisor(table);  // AI 负载预测（M9）
   collector.set_task_sink(task_sink);
   scheduler.set_task_sink(task_sink);

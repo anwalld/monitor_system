@@ -1,6 +1,6 @@
 # 交接文档
 
-更新时间：2026-11-16 中午（UTC+8）。M0–M9 已提交、推送，并全部归档到 `openspec/changes/archive/`；主 spec 在 `openspec/specs/`（30 个能力）。虚拟机 compose 里跑着 M9 的 Manager、AI 服务和看板。下一个里程碑是 M10（对照实验）。
+更新时间：2026-11-16 晚（UTC+8）。M0–M10 已提交、推送，并全部归档到 `openspec/changes/archive/`；主 spec 在 `openspec/specs/`（31 个能力）。虚拟机 compose 里跑着 M10 的 Manager（支持对照策略）、M9 的 AI 服务（预测推送关闭）和看板。十一个里程碑都已完成，剩下的是“等加机器后重做”的验收。
 
 ## 现状
 
@@ -18,6 +18,7 @@
 | M7 看板 | `m7b-dashboard` | 8/8 | c13de6e | 虚拟机 + Mac 测试容器验收 |
 | M8 AI 第一批 | `m8-ai-diagnosis` | 12/12 | fd08f67 | 虚拟机 + Mac 测试节点验收；DeepSeek 真实诊断；`/opsx:verify` 已过 |
 | M9 AI 第二批 | `m9-ai-ops` | 20/20 | 1e87511 | 虚拟机 + Mac 测试节点验收；DeepSeek 问答 20/20、日报数字一致；预测未优于基线，推送默认关闭 |
+| M10 对照实验 | `m10-comparison` | 11/11 | 见 git log | 三节点（虚拟机 + 2 个限 2 核容器）四组 × 10 轮；本系统约 6 秒避开干扰节点，干扰期 P99 低约 24% 但不显著；撞 Worker 并发上限导致失败更多；预测无作用。待十几台 Worker 重跑 |
 
 - `/opsx:verify`：M1–M8 于 11-15 跑过，M9 于 11-16 跑过，代码与 spec 一致。M9 verify 提出的 4 条警告、2 条建议都已处理（见 M9 design「实现中的决定」末尾）。
 - **归档（2026-11-16）**：按 M0 → M9 的顺序全部归档。归档前把后面变更里“自本变更起……”覆盖前面说法的 ADDED 条目改成了 MODIFIED（m5b、m6、m9 的 `manager-allocation`「候选集合与权重」与「Scheduler.Allocate」，m6 的 `worker-task-exec`「Probe」），主 spec 里每条需求只有一个当前说法；`openspec validate --specs` 30 项全过（`worker-task-exec` 有一条“需求文字过长”的提示，历史遗留）。
@@ -27,11 +28,9 @@
 
 ## 下一步
 
-1. **M10 对照实验**：四组（轮询、按核数加权轮询、本系统不带预测、本系统带预测）各跑 10 轮，见开发文档“对照实验”。用 `/opsx:new` 或 `/opsx:ff` 新建变更。
-   - 要十几台 Worker，现在只有 lm-worker-1 和 Mac 上的 lmtest-worker2，先问用户能否加机器。
-   - “带预测”组要临时打开 `predict.push`（`config/ai.yaml`，配置打在镜像里，要重建 `lm-ai`）。
-   - 压测客户端 `lm-bench` 还只有本系统的分配方式；轮询、加权轮询两组需要在客户端或 Manager 侧加对照策略。
-2. **等用户决定**：
+1. **M10 暴露的问题（可做新变更）**：本系统把任务集中到少数节点时撞上 Worker 并发上限（Submit RESOURCE_EXHAUSTED），失败数是轮询的约 3 倍。方向：Worker 上报 `max_concurrent` 与当前运行数并纳入选择，或 Manager 按拒收事件降权。改完用 `experiments/compare.py` 同样的参数重跑对照（命令见 README“对照实验”）。
+2. **加机器后重跑 M10**：同一套工具，`--node` 换成真实 Worker 即可。
+3. **等用户决定**：
    - 第二块网卡能否上外网（M0 2.4）；是否再加 2 台以上 Worker（M0 4.2、M1 7.1、M5b 5.4、M6 4.3/4.4，也是 M10 的前提）。
    - 负载预测是否保持关闭（见下方 M9 数据）。
 
@@ -76,6 +75,7 @@
   - 服务：redis、mysql、manager（M9，含 Advisor 服务）、ai（M9，监听 127.0.0.1:8000）、nginx（M9 看板，80 端口，http://172.16.255.133/ ；`/api/ai/chat` 不缓冲，`/api/ai/` → AI，`/api/`、`/ws` → Manager）。镜像都是 `latest`，同一份另有 `:m9` 标签在 Mac 上。
   - `~/lm/deploy/.env.mcp`（600，M9 新增）：从 `.env` 派生的 Redis/MySQL 连接变量，给 MCP server 和 `chat_eval.py`、`predict_eval.py` 用（命令见 README“运维问答”）。
   - 密码在 `~/lm/deploy/.env`（随机生成）；没有 `API_TOKEN`，看板和 AI 接口都不鉴权。
+  - M10：`lm-manager:latest` 是 M10（回滚 `lm-manager:m9`）；`lm-ai:latest` 换回了 M9（= `lm-ai:m9`，推送关闭），`lm-ai:m10push` 是打开推送的实验镜像。
   - 回滚：镜像 `lm-manager:m7`、`lm-ai:m8`、`lm-web:m8`（M8 状态，compose 文件不用换）；更早的 compose 文件 `docker-compose.yml.m7.bak`、`docker-compose.yml.m6.bak`，镜像 `lm-web:m7`，`lm-manager:m6`、`m5`、`m5a`、`m3`。
   - LLM：DeepSeek（deepseek-chat），Key 由用户在看板设置页填写（Redis `ai:keys`，不回显）；每日 token 预算 100 万（用户 2026-11-15 从 20 万调高）。正式配置去重 600 秒。
 - **ROS 仿真（用户的另一个项目）**：2026-11-15 15:03 起在 `~/robot_ws` 跑 ROS 2 Jazzy + Gazebo，会长期运行，不要动这些进程。它让 lm-worker-1 的 CPU 常在 0.9 以上、可用内存 0.3–0.5，Manager 反复剔除它，AI 大约每 10 分钟诊断一次（每次约 5000 token，一天约 70 万）。需要干净节点时用 Mac 上的 `lmtest-worker2`。
@@ -85,6 +85,8 @@
 
 - **`lmtest-worker2`（一直在跑）**：干净的第二个节点，接入虚拟机上的 Manager 和 AI，也会分到调度任务。镜像 `lmtest-w2img`（lm-builder + iproute2、fio、ping），两块网卡：默认 bridge 的 eth0 和 `lmtest-net2`（10.213.0.0/24）的 eth1，`--cap-add NET_ADMIN`。配置：`node_id: lmtest-worker2`、`cpu_source: proc`、`runq: off`（容器里没有 eBPF）、`nic_probe: on`（eth0 → 172.17.0.1，eth1 → 10.213.0.1）、`manager_addr: 172.16.255.133:50051`、task 段与虚拟机相同（含 token）。Manager 看到的地址是 172.16.255.1:50052。不用时 `docker rm -f lmtest-worker2 && docker network rm lmtest-net2`。
 - **cppaiserver**（用户的另一个项目）：14 个容器，M8 验收时按用户要求停过；11-15 晚已在运行（用户恢复的），不要停。它占用本机 8080、18090。在这台 Docker 虚拟机上注入 CPU 负载时用 `nice -n 19`，少影响它。
+- **`lmtest-worker3`（M10 新增，一直在跑）**：第三个测试节点，`--cpus 2`、`cpu_source: cgroup`、并发上限 4、`--init`，只有默认 bridge 一块网卡（eth0 → 172.17.0.1）。`manager_addr` 用虚拟机 host-only 地址 172.16.13.128:50051，Manager 看到的地址是 172.16.13.1:50052（端口只发布在 172.16.13.1 上；worker2 的只发布在 172.16.255.1 上，两个容器经 NAT 出站对端 IP 相同，这样才不冲突）。
+- **两个测试容器的配置文件**：`~/Backups/monitor_system/lmtest-worker2.yaml`、`lmtest-worker3.yaml`（600，含 token）。M10 起 worker2 也改成 `--cpus 2`、`cpu_source: cgroup`、并发上限 4、`--init`，重建后网卡顺序是 eth0 = lmtest-net2、eth1 = bridge（探测目标已对调）。重建命令见归档的 m10 tasks 1.4，worker3 把端口改成 `-p 172.16.13.1:50052:50052` 并去掉 `network connect`。
 - **`.claude/launch.json`**：本机看板开发配置（`web-dev`，`VITE_MANAGER=http://127.0.0.1:18080`、`VITE_AI=http://127.0.0.1:18000`），不提交。
 
 ## 常用操作
@@ -126,6 +128,7 @@ python3 experiments/ai_eval.py --url http://172.16.255.133 --faults f.jsonl
 ## 注意事项
 
 **和用户协作**
+- 长任务先报预计时间，挂监视（Monitor）在单步超时时报警，不要干等最终通知；Mac 上的长任务用 `caffeinate -i` 包住（会话空闲 5 分钟后防休眠会失效，M10 第一次实验因此中断）。
 - 用户用中文，消息简短，异步协作。能自己决定的就决定，写进 design.md 后再汇报，不为小问题停下来等。
 - 2026-11-14 用户授权“一直做，不用问”：里程碑验收完直接提交并推送，每个里程碑一个提交。提交前检查别带上 `.env`、`build-*`、`vmlinux.h`、skeleton 头文件、`web/node_modules`、`web/dist`、`__pycache__`、`.claude/launch.json`。
 - 仍要先问：删用户数据；动 compose 项目 `lm` 里换镜像以外的东西（停 MySQL、改 `.env` 等）；停用户其他项目的进程或容器（ROS、cppaiserver）；需要用户账号或密钥的事。

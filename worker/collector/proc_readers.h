@@ -86,4 +86,29 @@ class DiskReader {
   int64_t prev_ms_ = -1;
 };
 
+// ---- cgroup v2 CPU 来源（M10）：节点是容器、按配额限核时用 ----
+// cpu.max："max 100000" 返回空；"200000 100000" 返回 2.0（可为小数）；格式错误返回空。
+std::optional<double> parse_cpu_max(std::string_view text);
+// cpuset.cpus.effective："0-3,6" → 5；空或格式错误返回 0。
+unsigned parse_cpuset_count(std::string_view text);
+// cpu.stat 的 usage_usec；没有该行返回空。
+std::optional<uint64_t> parse_cpu_usage_usec(std::string_view text);
+
+// 以 cgroup 的 CPU 使用量合成每核读数：可用核数 q = 配额（cpu.max），无配额时取 cpuset 的核数；
+// 给出 ceil(q) 个核，每核 total = 单调时钟微秒数，idle = total − usage_usec / q，
+// 于是每核忙碌度都等于“cgroup 使用量 / 可用核数”。核数在构造时确定（之后配额变化需重启 Worker）。
+class CgroupCpuSource : public CpuSource {
+ public:
+  explicit CgroupCpuSource(const std::string& dir = "/sys/fs/cgroup");  // 读不到时抛 std::runtime_error
+  bool read(CpuSnapshot& out) override;
+  double quota_cores() const { return q_; }
+  unsigned cores() const { return n_; }
+
+ private:
+  ProcFile stat_;
+  std::string buf_;
+  double q_ = 1;
+  unsigned n_ = 1;
+};
+
 }  // namespace lm::worker

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 
 namespace lm::manager {
 
@@ -148,15 +149,20 @@ std::vector<std::string> NodeTable::node_ids() const {
   return ids;
 }
 
-SelectResult NodeTable::select(int64_t now_mono_ms, double u) const {
+SelectResult NodeTable::select(int64_t now_mono_ms, double u, Policy policy) const {
   std::lock_guard<std::mutex> lk(mu_);
-  return select_locked(now_mono_ms, u);
+  if (policy == Policy::kRoundRobin || policy == Policy::kWeightedRR) {
+    return select_baseline_locked(now_mono_ms, policy);
+  }
+  return select_locked(now_mono_ms, u, policy != Policy::kScoreNoPred);
 }
 
 SelectResult NodeTable::allocate(int64_t now_mono_ms, double u, const std::string& task_id,
-                                 uint64_t input_bytes) {
+                                 uint64_t input_bytes, Policy policy) {
   std::lock_guard<std::mutex> lk(mu_);
-  SelectResult r = select_locked(now_mono_ms, u);
+  SelectResult r = (policy == Policy::kRoundRobin || policy == Policy::kWeightedRR)
+                       ? select_baseline_locked(now_mono_ms, policy)
+                       : select_locked(now_mono_ms, u, policy != Policy::kScoreNoPred);
   if (r.pick) ledger_.add(task_id, r.pick->node_id, input_bytes, now_mono_ms);
   return r;
 }
@@ -192,7 +198,62 @@ InflightSnapshot NodeTable::inflight_snapshot(const std::string& node_id) const 
   return ledger_.snapshot(node_id);
 }
 
-SelectResult NodeTable::select_locked(int64_t now_mono_ms, double u) const {
+SelectResult NodeTable::select_baseline_locked(int64_t now_mono_ms, Policy policy) const {
+  struct Cand {
+    const NodeState* n;
+    int64_t w;
+  };
+  std::vector<Cand> cands;
+  SelectResult r;
+  r.total = nodes_.size();
+  cands.reserve(nodes_.size());
+  for (const auto& [id, n] : nodes_) {
+    if (!fresh(n, now_mono_ms)) {
+      ++r.lost;
+      continue;
+    }
+    if (n.br.probe_fail_streak >= opt_.breaker.probe_fail_evict) {
+      ++r.evicted;
+      continue;
+    }
+    cands.push_back({&n, n.ncpu == 0 ? 1 : static_cast<int64_t>(n.ncpu)});
+  }
+  r.candidates = cands.size();
+  // 离开候选的节点清除加权轮询状态
+  for (auto it = wrr_current_.begin(); it != wrr_current_.end();) {
+    const bool in = std::any_of(cands.begin(), cands.end(),
+                                [&](const Cand& c) { return c.n->node_id == it->first; });
+    it = in ? std::next(it) : wrr_current_.erase(it);
+  }
+  if (cands.empty()) return r;
+  std::sort(cands.begin(), cands.end(),
+            [](const Cand& a, const Cand& b) { return a.n->node_id < b.n->node_id; });
+  std::size_t i = 0;
+  double prob = 0;
+  if (policy == Policy::kRoundRobin) {
+    i = static_cast<std::size_t>(rr_next_++ % cands.size());
+    prob = 1.0 / static_cast<double>(cands.size());
+  } else {
+    int64_t total = 0;
+    int64_t best = 0;
+    for (std::size_t k = 0; k < cands.size(); ++k) {
+      int64_t& cur = wrr_current_[cands[k].n->node_id];
+      cur += cands[k].w;
+      total += cands[k].w;
+      if (k == 0 || cur > best) {  // 相同时保留 node_id 小的
+        best = cur;
+        i = k;
+      }
+    }
+    wrr_current_[cands[i].n->node_id] -= total;
+    prob = static_cast<double>(cands[i].w) / static_cast<double>(total);
+  }
+  const Cand& c = cands[i];
+  r.pick = SelectResult::Pick{c.n->node_id, c.n->addr, static_cast<double>(c.w), prob};
+  return r;
+}
+
+SelectResult NodeTable::select_locked(int64_t now_mono_ms, double u, bool use_pred) const {
   struct Cand {
     const NodeState* n;
     double w;
@@ -214,7 +275,9 @@ SelectResult NodeTable::select_locked(int64_t now_mono_ms, double u) const {
       ++r.evicted;
       continue;
     }
-    const double w = weight(n.score.total, factors_for(n, now_mono_ms, false));
+    Factors f = factors_for(n, now_mono_ms, false);
+    if (!use_pred) f.pred = 1;
+    const double w = weight(n.score.total, f);
     if (w > 0) cands.push_back({&n, w});
   }
   r.candidates = cands.size();

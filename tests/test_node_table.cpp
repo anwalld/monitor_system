@@ -265,3 +265,87 @@ TEST(NodeTableScoring, ConcurrentApplyAndSelect) {
 }
 
 }  // namespace
+
+// ---------- M10：对照分配策略 ----------
+
+namespace {
+
+using lm::manager::Policy;
+int g_seq = 0;
+
+std::string pick(NodeTable& t, int64_t now, Policy p) {
+  const auto r = t.allocate(now, 0.5, "t" + std::to_string(++g_seq), 0, p);
+  return r.pick ? r.pick->node_id : "";
+}
+
+TEST(NodeTablePolicy, ParsePolicy) {
+  EXPECT_EQ(lm::manager::parse_policy(""), Policy::kScore);
+  EXPECT_EQ(lm::manager::parse_policy("score"), Policy::kScore);
+  EXPECT_EQ(lm::manager::parse_policy("score_nopred"), Policy::kScoreNoPred);
+  EXPECT_EQ(lm::manager::parse_policy("rr"), Policy::kRoundRobin);
+  EXPECT_EQ(lm::manager::parse_policy("wrr"), Policy::kWeightedRR);
+  EXPECT_FALSE(lm::manager::parse_policy("foo"));
+  EXPECT_STREQ(lm::manager::policy_name(Policy::kWeightedRR), "wrr");
+}
+
+TEST(NodeTablePolicy, RoundRobinIgnoresScoreEviction) {
+  NodeTable t({});
+  AcceptedSample a;
+  t.apply(healthy("w1", 1), "10.0.0.11", 1000, 0, nullptr);
+  t.apply(healthy("w2", 1), "10.0.0.12", 1000, 0, nullptr);
+  t.apply(healthy("w3", 1), "10.0.0.13", 1000, 0, nullptr);
+  for (uint64_t i = 2; i <= 4; ++i) t.apply(healthy("w2", i, 0.98F), "10.0.0.12", 1000 + i, 0, &a);
+  ASSERT_TRUE(a.evicted);  // 关键指标剔除，本系统不会选它
+  std::vector<std::string> got;
+  for (int i = 0; i < 6; ++i) got.push_back(pick(t, 1100, Policy::kRoundRobin));
+  EXPECT_EQ(got, (std::vector<std::string>{"w1", "w2", "w3", "w1", "w2", "w3"}));
+  for (int i = 0; i < 6; ++i) EXPECT_NE(pick(t, 1100, Policy::kScore), "w2");
+  // 选中的任务同样记入在途账
+  EXPECT_GE(t.inflight_totals().inflight, 6U);
+}
+
+TEST(NodeTablePolicy, RoundRobinSkipsLostAndProbeFailed) {
+  NodeTable t({});
+  t.apply(healthy("w1", 1), "10.0.0.11", 1000, 0, nullptr);
+  t.apply(healthy("w2", 1), "10.0.0.12", 1000, 0, nullptr);
+  t.apply(healthy("w3", 1), "10.0.0.13", 1000, 0, nullptr);
+  t.apply(healthy("w1", 2), "10.0.0.11", 4500, 0, nullptr);
+  t.apply(healthy("w3", 2), "10.0.0.13", 4500, 0, nullptr);
+  for (int i = 0; i < 4; ++i) EXPECT_NE(pick(t, 4500, Policy::kRoundRobin), "w2");  // w2 失联
+  const auto r = t.select(4500, 0.5, Policy::kRoundRobin);
+  EXPECT_EQ(r.lost, 1U);
+  EXPECT_EQ(r.candidates, 2U);
+  EXPECT_NEAR(r.pick->prob, 0.5, 1e-9);
+  // w3 低频探测连续失败到剔除线
+  for (int i = 0; i < t.options().breaker.probe_fail_evict; ++i) t.on_probe("w3", false, 4600, 0);
+  for (int i = 0; i < 4; ++i) EXPECT_EQ(pick(t, 4600, Policy::kRoundRobin), "w1");
+  EXPECT_FALSE(t.select(9000, 0.5, Policy::kRoundRobin).pick);  // 全部失联
+}
+
+TEST(NodeTablePolicy, SmoothWeightedRoundRobinByCores) {
+  NodeTable t({});
+  lm::Sample s1 = healthy("w1", 1);
+  for (int i = 0; i < 2; ++i) s1.add_core_busy(0.1F);  // 4 核
+  t.apply(s1, "10.0.0.11", 1000, 0, nullptr);
+  t.apply(healthy("w2", 1), "10.0.0.12", 1000, 0, nullptr);  // 2 核
+  std::vector<std::string> got;
+  for (int i = 0; i < 6; ++i) got.push_back(pick(t, 1100, Policy::kWeightedRR));
+  EXPECT_EQ(got, (std::vector<std::string>{"w1", "w2", "w1", "w1", "w2", "w1"}));
+  EXPECT_NEAR(t.select(1100, 0.5, Policy::kWeightedRR).pick->prob, 4.0 / 6.0, 1e-9);
+}
+
+TEST(NodeTablePolicy, ScoreNoPredIgnoresPrediction) {
+  NodeTable::Options o;
+  o.breaker.slow_start_ms = 0;
+  NodeTable t(o);
+  t.apply(healthy_sample("w1", 1), "10.0.0.11", 1000, 1000, nullptr);
+  t.apply(healthy_sample("w2", 1), "10.0.0.12", 1000, 1000, nullptr);
+  std::vector<lm::manager::StateChange> ch;
+  std::vector<lm::manager::RescueStart> rs;
+  t.tick_states(1100, 1100, &ch, &rs);
+  t.set_predictions({{"w1", 0.9, 0.5}}, 10000, 1200);
+  EXPECT_NEAR(t.select(1200, 0.0, Policy::kScore).pick->prob, 1.0 / 3.0, 1e-9);
+  EXPECT_NEAR(t.select(1200, 0.0, Policy::kScoreNoPred).pick->prob, 0.5, 1e-9);
+}
+
+}  // namespace

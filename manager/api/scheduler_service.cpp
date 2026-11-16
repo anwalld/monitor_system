@@ -31,10 +31,18 @@ grpc::Status SchedulerService::Allocate(grpc::ServerContext* /*ctx*/, const lm::
     return {grpc::StatusCode::INVALID_ARGUMENT,
             "client_id 超过 " + std::to_string(opt_.max_client_id_len) + " 字节"};
   }
+  const std::optional<Policy> policy = parse_policy(req->policy());
+  if (!policy) {
+    return {grpc::StatusCode::INVALID_ARGUMENT,
+            "未知的分配策略 " + req->policy() + "（可选 score、score_nopred、rr、wrr）"};
+  }
+  if (*policy != Policy::kScore && !opt_.allow_policy) {
+    return {grpc::StatusCode::FAILED_PRECONDITION, "对照策略未开启（allocation.allow_policy）"};
+  }
   const double u = uniform();  // 锁外生成随机数和 task_id
   const uint64_t seq = next_seq_.fetch_add(1, std::memory_order_relaxed);
   std::string task_id = prefix_ + "-" + std::to_string(seq);
-  const SelectResult r = table_.allocate(lm::mono_ms(), u, task_id, req->input_bytes());
+  const SelectResult r = table_.allocate(lm::mono_ms(), u, task_id, req->input_bytes(), *policy);
   if (!r.pick) {
     rejected_.fetch_add(1, std::memory_order_relaxed);
     return {grpc::StatusCode::RESOURCE_EXHAUSTED,
@@ -53,9 +61,9 @@ grpc::Status SchedulerService::Allocate(grpc::ServerContext* /*ctx*/, const lm::
   resp->set_task_id(std::move(task_id));
   resp->set_worker_addr(r.pick->addr);
   allocated_.fetch_add(1, std::memory_order_relaxed);
-  spdlog::debug("分配 {} → {}（{}），概率 {:.3f}，客户端 {}，输入 {} 字节，类型 {}", resp->task_id(),
-                r.pick->node_id, r.pick->addr, r.pick->prob, req->client_id(), req->input_bytes(),
-                req->kind());
+  spdlog::debug("分配 {} → {}（{}），概率 {:.3f}，客户端 {}，输入 {} 字节，类型 {}，策略 {}",
+                resp->task_id(), r.pick->node_id, r.pick->addr, r.pick->prob, req->client_id(),
+                req->input_bytes(), req->kind(), policy_name(*policy));
   return grpc::Status::OK;
 }
 

@@ -24,10 +24,11 @@ lm::Sample healthy(const std::string& id, uint64_t seq, float cpu = 0.1F) {
 
 struct Harness {
   NodeTable table{NodeTable::Options{}};
-  SchedulerService svc{table, SchedulerService::Options{0x19a7c3e2f10, 7, 64}};
+  SchedulerService svc;
   std::unique_ptr<grpc::Server> server;
   std::unique_ptr<lm::Scheduler::Stub> stub;
-  Harness() {
+  explicit Harness(bool allow_policy = true)
+      : svc(table, SchedulerService::Options{0x19a7c3e2f10, 7, 64, allow_policy}) {
     int port = 0;
     grpc::ServerBuilder b;
     b.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(), &port);
@@ -36,10 +37,12 @@ struct Harness {
     stub = lm::Scheduler::NewStub(grpc::CreateChannel("127.0.0.1:" + std::to_string(port),
                                                       grpc::InsecureChannelCredentials()));
   }
-  grpc::Status allocate(const std::string& client, lm::AllocateResp* resp) {
+  grpc::Status allocate(const std::string& client, lm::AllocateResp* resp,
+                        const std::string& policy = "") {
     grpc::ClientContext ctx;
     lm::AllocateReq req;
     req.set_client_id(client);
+    req.set_policy(policy);
     req.set_input_bytes(1024);
     req.set_kind("cpu");
     return stub->Allocate(&ctx, req, resp);
@@ -128,6 +131,33 @@ TEST(SchedulerService, SpreadsAcrossNodesByWeight) {
     if (r.worker_addr() == "10.0.0.1:50052") ++w1;
   }
   EXPECT_NEAR(static_cast<double>(w1) / n, 1.0 / 1.85, 0.04);
+}
+
+TEST(SchedulerService, PolicyRoundRobinAndErrors) {
+  Harness h;
+  h.report(healthy("w1", 1), "10.0.0.1");
+  h.report(healthy("w2", 1), "10.0.0.2");
+  lm::AllocateResp r;
+  std::vector<std::string> got;
+  for (int i = 0; i < 4; ++i) {
+    ASSERT_TRUE(h.allocate("bench", &r, "rr").ok());
+    got.push_back(r.worker_addr());
+  }
+  EXPECT_EQ(got, (std::vector<std::string>{"10.0.0.1:50052", "10.0.0.2:50052", "10.0.0.1:50052",
+                                           "10.0.0.2:50052"}));
+  EXPECT_TRUE(h.allocate("bench", &r, "wrr").ok());
+  EXPECT_TRUE(h.allocate("bench", &r, "score_nopred").ok());
+  EXPECT_TRUE(h.allocate("bench", &r, "score").ok());
+  EXPECT_EQ(h.allocate("bench", &r, "foo").error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(SchedulerService, PolicyDisabled) {
+  Harness h(false);
+  h.report(healthy("w1", 1), "10.0.0.1");
+  lm::AllocateResp r;
+  EXPECT_EQ(h.allocate("bench", &r, "rr").error_code(), grpc::StatusCode::FAILED_PRECONDITION);
+  EXPECT_TRUE(h.allocate("bench", &r).ok());
+  EXPECT_TRUE(h.allocate("bench", &r, "score").ok());
 }
 
 }  // namespace

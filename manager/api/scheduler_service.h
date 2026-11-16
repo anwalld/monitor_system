@@ -21,6 +21,7 @@ class SchedulerService final : public lm::Scheduler::Service {
     int64_t start_wall_ms = 0;  // task_id 前缀；0 表示取构造时刻
     uint64_t seed = 0;          // 随机数种子；0 表示用 random_device
     std::size_t max_client_id_len = 64;
+    bool allow_policy = true;  // manager.yaml allocation.allow_policy：是否接受对照策略（M10）
   };
 
   SchedulerService(NodeTable& table, Options opt);

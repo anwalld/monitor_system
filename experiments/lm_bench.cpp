@@ -3,8 +3,12 @@
 //     调 n 次 Scheduler.Allocate，n=1 时打印 task_id 与地址，否则打印每个地址被选中的次数。
 //   lm-bench submit [-m 127.0.0.1:50051] [-r 5] [-d 60] [-s 1] [-c bench] [--cmd /bin/sleep]
 //                   [--args "0.2"] [--bytes 1024] [--token T] [--timeout 30] [--csv out.csv] [--print]
+//                   [--policy rr] [--workload file] [--host-map addr=value ...]
 //     按泊松到达（速率 r，固定种子）执行 Allocate → MarkSent → 直连 Worker Submit，
 //     每秒打印各 Worker 的分配占比，结束时打印完成时间分位数与失败分类。
+//     --policy 填入 AllocateReq.policy（M10 对照策略：score、score_nopred、rr、wrr）。
+//     --workload 每行 "名称|比例|命令|参数1|参数2…"，按独立随机流（种子 seed+1000003）抽类型；
+//     参数里的 {host} 按 --host-map 替换（没有对应项时用 Worker 地址里的 IP）。
 
 #include <algorithm>
 #include <atomic>
@@ -33,15 +37,17 @@ using Clock = std::chrono::steady_clock;
 
 void usage() {
   std::cerr << "用法:\n"
-               "  lm-bench allocate [-m manager] [-n 次数] [-c client_id]\n"
+               "  lm-bench allocate [-m manager] [-n 次数] [-c client_id] [--policy P]\n"
                "  lm-bench submit [-m manager] [-r 每秒任务数] [-d 秒数] [-s 种子] [-c client_id]\n"
                "                  [--cmd 命令] [--args \"参数\"] [--bytes 输入字节] [--token T]\n"
-               "                  [--timeout 秒] [--csv 文件] [--print]\n";
+               "                  [--timeout 秒] [--csv 文件] [--print] [--policy P]\n"
+               "                  [--workload 文件] [--host-map worker_addr=值 ...]\n";
 }
 
 int cmd_allocate(int argc, char** argv) {
   std::string mgr = "127.0.0.1:50051";
   std::string client = "bench";
+  std::string policy;
   long n = 1;
   for (int i = 0; i < argc; ++i) {
     const std::string a = argv[i];
@@ -51,6 +57,8 @@ int cmd_allocate(int argc, char** argv) {
       n = std::strtol(argv[++i], nullptr, 10);
     } else if (a == "-c" && i + 1 < argc) {
       client = argv[++i];
+    } else if (a == "--policy" && i + 1 < argc) {
+      policy = argv[++i];
     } else {
       usage();
       return 2;
@@ -64,6 +72,7 @@ int cmd_allocate(int argc, char** argv) {
     ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
     lm::AllocateReq req;
     req.set_client_id(client);
+    req.set_policy(policy);
     lm::AllocateResp resp;
     const grpc::Status st = stub->Allocate(&ctx, req, &resp);
     if (n == 1) {
@@ -85,6 +94,81 @@ int cmd_allocate(int argc, char** argv) {
   return errors.empty() ? 0 : 1;
 }
 
+// 一类任务（--workload 的一行）。
+struct TaskType {
+  std::string name;
+  double weight = 1;
+  std::string cmd;
+  std::vector<std::string> args;
+};
+
+std::vector<std::string> split(const std::string& s, char sep) {
+  std::vector<std::string> out;
+  std::string cur;
+  for (char c : s) {
+    if (c == sep) {
+      out.push_back(cur);
+      cur.clear();
+    } else {
+      cur += c;
+    }
+  }
+  out.push_back(cur);
+  return out;
+}
+
+std::vector<TaskType> load_workload(const std::string& path) {
+  std::ifstream f(path);
+  if (!f) {
+    std::cerr << "无法读取任务类型文件 " << path << "\n";
+    std::exit(2);
+  }
+  std::vector<TaskType> out;
+  for (std::string line; std::getline(f, line);) {
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+    if (line.empty() || line[0] == '#') continue;
+    auto parts = split(line, '|');
+    if (parts.size() < 3 || parts[0].empty() || parts[2].empty()) {
+      std::cerr << "任务类型行格式错误（名称|比例|命令|参数…）：" << line << "\n";
+      std::exit(2);
+    }
+    TaskType t;
+    t.name = parts[0];
+    t.weight = std::strtod(parts[1].c_str(), nullptr);
+    if (!(t.weight > 0)) {
+      std::cerr << "任务类型比例必须大于 0：" << line << "\n";
+      std::exit(2);
+    }
+    t.cmd = parts[2];
+    t.args.assign(parts.begin() + 3, parts.end());
+    out.push_back(std::move(t));
+  }
+  if (out.empty()) {
+    std::cerr << "任务类型文件为空：" << path << "\n";
+    std::exit(2);
+  }
+  return out;
+}
+
+// 把 s 中所有 {host} 替换为 v。
+std::string subst_host(std::string s, const std::string& v) {
+  const std::string key = "{host}";
+  for (std::size_t p = s.find(key); p != std::string::npos; p = s.find(key, p + v.size())) {
+    s.replace(p, key.size(), v);
+  }
+  return s;
+}
+
+// "ip:port" / "[v6]:port" 取 IP。
+std::string addr_ip(const std::string& addr) {
+  if (!addr.empty() && addr[0] == '[') {
+    const auto e = addr.find(']');
+    return e == std::string::npos ? addr : addr.substr(1, e - 1);
+  }
+  const auto c = addr.rfind(':');
+  return c == std::string::npos ? addr : addr.substr(0, c);
+}
+
 struct SubmitOpts {
   std::string mgr = "127.0.0.1:50051";
   double rate = 5;
@@ -98,6 +182,9 @@ struct SubmitOpts {
   uint32_t timeout_s = 30;
   std::string csv;
   bool print = false;  // 打印每个任务的输出末尾（调试用）
+  std::string policy;
+  std::vector<TaskType> workload;  // 为空时用 cmd/args
+  std::map<std::string, std::string> host_map;
 };
 
 struct TaskRecord {
@@ -108,6 +195,7 @@ struct TaskRecord {
   int code = 0;                    // gRPC 状态码
   int exit_code = 0;
   int64_t latency_ms = 0;
+  std::string kind;
 };
 
 class Bench {
@@ -125,7 +213,7 @@ class Bench {
     if (!s) s = lm::WorkerTask::NewStub(grpc::CreateChannel(addr, grpc::InsecureChannelCredentials()));
     return s.get();
   }
-  void one(int64_t start_ms);
+  void one(int64_t start_ms, int type);
   void print_second(int sec);
 
   SubmitOpts o_;
@@ -142,9 +230,11 @@ class Bench {
   Clock::time_point t0_;
 };
 
-void Bench::one(int64_t start_ms) {
+void Bench::one(int64_t start_ms, int type) {
   TaskRecord rec;
   rec.start_ms = start_ms;
+  const TaskType* tt = type >= 0 ? &o_.workload[static_cast<std::size_t>(type)] : nullptr;
+  if (tt != nullptr) rec.kind = tt->name;
   const auto begin = Clock::now();
   auto finish = [&](const std::string& stage, const grpc::Status& st) {
     rec.stage = stage;
@@ -156,6 +246,8 @@ void Bench::one(int64_t start_ms) {
     lm::AllocateReq areq;
     areq.set_client_id(o_.client);
     areq.set_input_bytes(o_.bytes);
+    areq.set_kind(rec.kind);
+    areq.set_policy(o_.policy);
     lm::AllocateResp aresp;
     grpc::ClientContext actx;
     actx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(2));
@@ -183,8 +275,15 @@ void Bench::one(int64_t start_ms) {
     }
     lm::TaskReq treq;
     treq.set_task_id(rec.task_id);
-    treq.set_command(o_.cmd);
-    for (const auto& a : o_.args) treq.add_args(a);
+    if (tt != nullptr) {
+      const auto hm = o_.host_map.find(rec.addr);
+      const std::string host = hm != o_.host_map.end() ? hm->second : addr_ip(rec.addr);
+      treq.set_command(tt->cmd);
+      for (const auto& a : tt->args) treq.add_args(subst_host(a, host));
+    } else {
+      treq.set_command(o_.cmd);
+      for (const auto& a : o_.args) treq.add_args(a);
+    }
     treq.set_timeout_s(o_.timeout_s);
     lm::TaskResult tres;
     grpc::ClientContext tctx;
@@ -231,6 +330,15 @@ int Bench::run() {
   // 先按种子生成全部到达时刻，保证同一种子的到达序列完全相同
   std::vector<double> arrivals;
   for (double t = gap(rng); t < o_.duration_s; t += gap(rng)) arrivals.push_back(t);
+  // 任务类型用独立随机流，不影响到达序列
+  std::vector<int> types(arrivals.size(), -1);
+  if (!o_.workload.empty()) {
+    std::vector<double> w;
+    for (const auto& t : o_.workload) w.push_back(t.weight);
+    std::mt19937_64 trng(o_.seed + 1000003);
+    std::discrete_distribution<int> pick(w.begin(), w.end());
+    for (auto& t : types) t = pick(trng);
+  }
   std::printf("计划提交 %zu 个任务（种子 %llu，速率 %.1f/s，%.0f 秒）\n", arrivals.size(),
               static_cast<unsigned long long>(o_.seed), o_.rate, o_.duration_s);
 
@@ -238,7 +346,9 @@ int Bench::run() {
   std::vector<std::thread> threads;
   int next_print = 1;
   constexpr int kMaxActive = 256;
-  for (double at : arrivals) {
+  for (std::size_t k = 0; k < arrivals.size(); ++k) {
+    const double at = arrivals[k];
+    const int type = types[k];
     const auto when = t0_ + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(at));
     while (Clock::now() < when) {
       const auto tick = t0_ + std::chrono::seconds(next_print);
@@ -255,7 +365,7 @@ int Bench::run() {
     }
     const int64_t start_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - t0_).count();
-    threads.emplace_back([this, start_ms] { one(start_ms); });
+    threads.emplace_back([this, start_ms, type] { one(start_ms, type); });
   }
   while (Clock::now() < t0_ + std::chrono::duration<double>(o_.duration_s)) {
     std::this_thread::sleep_until(t0_ + std::chrono::seconds(next_print));
@@ -291,16 +401,37 @@ int Bench::run() {
     std::printf("  %-24s %6ld  %.4f\n", a.c_str(), c, hits > 0 ? double(c) / hits : 0.0);
   }
   for (const auto& [k, c] : fails) std::printf("失败 %s ×%ld\n", k.c_str(), c);
+  if (!o_.workload.empty()) {
+    for (const auto& t : o_.workload) {
+      std::vector<int64_t> kl;
+      long kf = 0;
+      for (const auto& r : records_) {
+        if (r.kind != t.name) continue;
+        if (r.stage == "done") {
+          kl.push_back(r.latency_ms);
+        } else {
+          ++kf;
+        }
+      }
+      std::sort(kl.begin(), kl.end());
+      auto kp = [&](double p) -> long long {
+        if (kl.empty()) return 0;
+        return kl[std::min(kl.size() - 1, static_cast<std::size_t>(p * (kl.size() - 1) + 0.5))];
+      };
+      std::printf("  类型 %-8s 完成 %5zu 失败 %4ld  P50 %lld  P99 %lld\n", t.name.c_str(), kl.size(), kf,
+                  kp(0.5), kp(0.99));
+    }
+  }
 
   if (!o_.csv.empty()) {
     std::ofstream f(o_.csv);
-    f << "start_ms,task_id,worker_addr,stage,code,exit_code,latency_ms\n";
+    f << "start_ms,task_id,worker_addr,stage,code,exit_code,latency_ms,kind\n";
     std::vector<TaskRecord> sorted = records_;
     std::sort(sorted.begin(), sorted.end(),
               [](const TaskRecord& a, const TaskRecord& b) { return a.start_ms < b.start_ms; });
     for (const auto& r : sorted) {
       f << r.start_ms << ',' << r.task_id << ',' << r.addr << ',' << r.stage << ',' << r.code << ','
-        << r.exit_code << ',' << r.latency_ms << '\n';
+        << r.exit_code << ',' << r.latency_ms << ',' << r.kind << '\n';
     }
     std::printf("明细已写入 %s\n", o_.csv.c_str());
   }
@@ -344,6 +475,18 @@ int cmd_submit(int argc, char** argv) {
       o.csv = next();
     } else if (a == "--print") {
       o.print = true;
+    } else if (a == "--policy") {
+      o.policy = next();
+    } else if (a == "--workload") {
+      o.workload = load_workload(next());
+    } else if (a == "--host-map") {
+      const std::string kv = next();
+      const auto eq = kv.find('=');
+      if (eq == std::string::npos || eq == 0) {
+        usage();
+        return 2;
+      }
+      o.host_map[kv.substr(0, eq)] = kv.substr(eq + 1);
     } else {
       usage();
       return 2;

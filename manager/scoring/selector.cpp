@@ -10,6 +10,24 @@ double weight(double score, const Factors& f) {
   return std::isfinite(w) && w > 0 ? w : 0;
 }
 
+std::optional<Policy> parse_policy(std::string_view s) {
+  if (s.empty() || s == "score") return Policy::kScore;
+  if (s == "score_nopred") return Policy::kScoreNoPred;
+  if (s == "rr") return Policy::kRoundRobin;
+  if (s == "wrr") return Policy::kWeightedRR;
+  return std::nullopt;
+}
+
+const char* policy_name(Policy p) {
+  switch (p) {
+    case Policy::kScore: return "score";
+    case Policy::kScoreNoPred: return "score_nopred";
+    case Policy::kRoundRobin: return "rr";
+    case Policy::kWeightedRR: return "wrr";
+  }
+  return "?";
+}
+
 std::optional<std::size_t> pick_weighted(const std::vector<double>& prefix, double u) {
   if (prefix.empty()) return std::nullopt;
   const double total = prefix.back();

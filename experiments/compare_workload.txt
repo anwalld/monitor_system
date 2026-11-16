@@ -1,0 +1,10 @@
+# M10 对照实验的任务类型（lm-bench --workload）。每行：名称|比例|命令|参数…
+# Worker 白名单只有 /bin/sleep、/usr/bin/stress、/bin/grep、/bin/sh，所以都用 /bin/sh -c 包一层。
+# 空闲时的耗时（lm-worker-1 / lmtest-worker2，2026-11-16 实测）：cpu ≈ 0.27 / 0.29 s；io 1000 次时 0.41 / 0.44 s（800 次按比例约 0.33 / 0.35 s）；net 0.23 / 0.87 s。
+#
+# CPU 密集：固定次数的 shell 循环，完成时间随 CPU 争用变长
+cpu|2|/bin/sh|-c|i=0; while [ $i -lt 450000 ]; do i=$((i+1)); done
+# IO 密集：800 次 4 KB 同步直写（约 3 MB，按延迟而不是带宽受限），写完删除
+io|1|/bin/sh|-c|f=/tmp/lm-io-$LM_TASK_ID; dd if=/dev/zero of=$f bs=4k count=800 oflag=direct,dsync 2>/dev/null; rc=$?; rm -f $f; exit $rc
+# 网络密集：从 Mac 上的 compare_data_server.py 下载 2 MB；{host} 由 lm-bench --host-map 按 Worker 替换
+net|1|/bin/sh|-c|python3 -c 'import sys,urllib.request; n=len(urllib.request.urlopen(sys.argv[1],timeout=20).read()); sys.exit(0 if n==2097152 else 3)' http://{host}:18200/2m

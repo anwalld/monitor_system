@@ -176,11 +176,12 @@ class NodeTable {
 
   // 按权重随机选一台：候选为未剔除、未失联（距上次上报 ≤ lost_after_ms）、分数 > 0 的节点，
   // 按 node_id 排序后做前缀和，u ∈ [0, 1) 由调用方在锁外生成。只做内存操作。
-  SelectResult select(int64_t now_mono_ms, double u) const;
+  // policy 为对照策略（M10）时按 select_baseline_locked 选择（会推进轮询状态）。
+  SelectResult select(int64_t now_mono_ms, double u, Policy policy = Policy::kScore) const;
 
   // 选择并记账（一次加锁）。选中时 task_id 记入在途账（状态 ALLOCATED）。
   SelectResult allocate(int64_t now_mono_ms, double u, const std::string& task_id,
-                        uint64_t input_bytes);
+                        uint64_t input_bytes, Policy policy = Policy::kScore);
   InflightLedger::MarkResult mark_sent(const std::string& task_id, int64_t now_mono_ms);
   InflightLedger::EventResult on_event(const std::string& task_id, lm::TaskEvent::Kind kind,
                                        int64_t now_mono_ms);
@@ -220,7 +221,9 @@ class NodeTable {
   const Options& options() const { return opt_; }
 
  private:
-  SelectResult select_locked(int64_t now_mono_ms, double u) const;
+  SelectResult select_locked(int64_t now_mono_ms, double u, bool use_pred = true) const;
+  // 对照策略（rr、wrr）：候选只要求新鲜、低频探测未到剔除线，不看分数、剔除、急救、慢启动与修正因子。
+  SelectResult select_baseline_locked(int64_t now_mono_ms, Policy policy) const;
   bool fresh(const NodeState& n, int64_t now_mono_ms) const {
     return now_mono_ms - n.last_seen_mono_ms <= opt_.scoring.lost_after_ms;
   }
@@ -240,6 +243,9 @@ class NodeTable {
   mutable std::mutex mu_;
   std::unordered_map<std::string, NodeState> nodes_;
   InflightLedger ledger_;
+  // 对照策略的状态（M10），锁内读写；select() 为 const 接口，所以是 mutable
+  mutable uint64_t rr_next_ = 0;
+  mutable std::unordered_map<std::string, int64_t> wrr_current_;
 };
 
 // 从 gRPC peer 字符串（"ipv4:10.0.0.1:5000"、"ipv6:[::1]:5000"、"ipv6:%5B::1%5D:5000"）中取出 IP。

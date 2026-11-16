@@ -59,6 +59,8 @@ advisor:                       # AI 负载预测（M9）：Advisor.PushPredictio
   min_factor: 0.5              # f_pred 限幅到 [min_factor, 1]
   default_ttl_ms: 10000        # 推送没带 ttl 时的有效期
   max_ttl_ms: 60000            # ttl 上限；过期后 f_pred 回到 1
+allocation:                    # 分配（M10）
+  allow_policy: true           # 接受 AllocateReq.policy 指定的对照策略（score_nopred、rr、wrr）；false 时返回 FAILED_PRECONDITION
 mysql:                         # 冷数据（M7）：5 分钟聚合、事件、任务；挂掉不影响调度
   enabled: true
   host: 127.0.0.1              # 环境变量 LM_MYSQL_HOST 可覆盖

@@ -39,11 +39,22 @@ std::string default_node_id() {
   return host;
 }
 
-// 按 cpu_source 配置创建 CPU 来源：auto 优先共享页、失败回退 /proc；shm 失败返回空；proc 直接用 /proc。
+// 按 cpu_source 配置创建 CPU 来源：auto 优先共享页、失败回退 /proc；shm 失败返回空；proc 直接用 /proc；
+// cgroup（M10）用 cgroup v2 的使用量与配额，给按配额限核的容器节点用，失败返回空。
 std::unique_ptr<lm::worker::CpuSource> make_cpu_source(const std::string& mode) {
   if (mode == "proc") {
     spdlog::info("CPU 来源：/proc/stat（配置 cpu_source=proc）");
     return std::make_unique<lm::worker::ProcCpuSource>();
+  }
+  if (mode == "cgroup") {
+    try {
+      auto cg = std::make_unique<lm::worker::CgroupCpuSource>();
+      spdlog::info("CPU 来源：cgroup v2（可用 {:.2f} 核，上报 {} 核）", cg->quota_cores(), cg->cores());
+      return cg;
+    } catch (const std::exception& e) {
+      spdlog::critical("cpu_source=cgroup 但无法使用：{}", e.what());
+      return nullptr;
+    }
   }
   try {
     auto shm = std::make_unique<lm::worker::ShmCpuSource>();
@@ -96,8 +107,8 @@ int main(int argc, char** argv) {
   lm::init_logging("worker", cfg.get<std::string>("log_level", "info"));
 
   const std::string cpu_mode = cfg.get<std::string>("cpu_source", "auto");
-  if (cpu_mode != "auto" && cpu_mode != "shm" && cpu_mode != "proc") {
-    spdlog::critical("配置项 cpu_source 取值无效：{}（可选 auto、shm、proc）", cpu_mode);
+  if (cpu_mode != "auto" && cpu_mode != "shm" && cpu_mode != "proc" && cpu_mode != "cgroup") {
+    spdlog::critical("配置项 cpu_source 取值无效：{}（可选 auto、shm、proc、cgroup）", cpu_mode);
     return 2;
   }
 

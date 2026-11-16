@@ -1,0 +1,1501 @@
+{
+ "runs": [
+  {
+   "tasks": 1191,
+   "ok": 1179,
+   "fail": 12,
+   "fail_by": {
+    "submit/8": 12
+   },
+   "p50": 362,
+   "p99": 1294,
+   "max": 2316,
+   "throughput": 7.86,
+   "kind_p99": {
+    "cpu": 1234,
+    "io": 1784,
+    "net": 253
+   },
+   "kind_p50": {
+    "cpu": 409,
+    "io": 416,
+    "net": 81
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1518,
+   "fault_p50": 434,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.3303964757709251,
+   "fault_share": 0.3333333333333333,
+   "round": 0,
+   "group": "rr",
+   "seed": 1000
+  },
+  {
+   "tasks": 1191,
+   "ok": 1190,
+   "fail": 1,
+   "fail_by": {
+    "submit/8": 1
+   },
+   "p50": 407,
+   "p99": 1277,
+   "max": 2515,
+   "throughput": 7.933,
+   "kind_p99": {
+    "cpu": 1202,
+    "io": 1630,
+    "net": 289
+   },
+   "kind_p50": {
+    "cpu": 449,
+    "io": 467,
+    "net": 93
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1497,
+   "fault_p50": 442,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.2511013215859031,
+   "fault_share": 0.25,
+   "round": 0,
+   "group": "wrr",
+   "seed": 1000
+  },
+  {
+   "tasks": 1191,
+   "ok": 1138,
+   "fail": 53,
+   "fail_by": {
+    "submit/8": 53
+   },
+   "p50": 431,
+   "p99": 1282,
+   "max": 1801,
+   "throughput": 7.587,
+   "kind_p99": {
+    "cpu": 1054,
+    "io": 1352,
+    "net": 257
+   },
+   "kind_p50": {
+    "cpu": 475,
+    "io": 507,
+    "net": 98
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1468,
+   "fault_p50": 525,
+   "reaction_s": 7.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.2290748898678414,
+   "fault_share": 0.0,
+   "round": 0,
+   "group": "score_nopred",
+   "seed": 1000
+  },
+  {
+   "tasks": 1191,
+   "ok": 1111,
+   "fail": 80,
+   "fail_by": {
+    "submit/8": 80
+   },
+   "p50": 457,
+   "p99": 1288,
+   "max": 1579,
+   "throughput": 7.407,
+   "kind_p99": {
+    "cpu": 996,
+    "io": 1431,
+    "net": 294
+   },
+   "kind_p50": {
+    "cpu": 502,
+    "io": 563,
+    "net": 103
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1318,
+   "fault_p50": 510,
+   "reaction_s": 6.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.21585903083700442,
+   "fault_share": 0.0,
+   "round": 0,
+   "group": "score",
+   "seed": 1000
+  },
+  {
+   "tasks": 1259,
+   "ok": 1254,
+   "fail": 5,
+   "fail_by": {
+    "exit/0": 2,
+    "submit/8": 3
+   },
+   "p50": 480,
+   "p99": 1266,
+   "max": 1718,
+   "throughput": 8.36,
+   "kind_p99": {
+    "cpu": 1420,
+    "io": 1356,
+    "net": 461
+   },
+   "kind_p50": {
+    "cpu": 516,
+    "io": 545,
+    "net": 110
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 1420,
+   "fault_p50": 507,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.4981549815498155,
+   "fault_share": 0.5,
+   "round": 1,
+   "group": "wrr",
+   "seed": 1001
+  },
+  {
+   "tasks": 1259,
+   "ok": 1143,
+   "fail": 116,
+   "fail_by": {
+    "submit/8": 115,
+    "exit/0": 1
+   },
+   "p50": 498,
+   "p99": 1369,
+   "max": 1558,
+   "throughput": 7.62,
+   "kind_p99": {
+    "cpu": 941,
+    "io": 1539,
+    "net": 301
+   },
+   "kind_p50": {
+    "cpu": 521,
+    "io": 805,
+    "net": 87
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 1364,
+   "fault_p50": 553,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.16236162361623616,
+   "fault_share": 0.0,
+   "round": 1,
+   "group": "score_nopred",
+   "seed": 1001
+  },
+  {
+   "tasks": 1259,
+   "ok": 1108,
+   "fail": 151,
+   "fail_by": {
+    "submit/8": 151
+   },
+   "p50": 573,
+   "p99": 1654,
+   "max": 19546,
+   "throughput": 7.387,
+   "kind_p99": {
+    "cpu": 1108,
+    "io": 1745,
+    "net": 351
+   },
+   "kind_p50": {
+    "cpu": 586,
+    "io": 941,
+    "net": 103
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 1630,
+   "fault_p50": 607,
+   "reaction_s": 6.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.16605166051660517,
+   "fault_share": 0.0,
+   "round": 1,
+   "group": "score",
+   "seed": 1001
+  },
+  {
+   "tasks": 1259,
+   "ok": 1255,
+   "fail": 4,
+   "fail_by": {
+    "submit/8": 4
+   },
+   "p50": 467,
+   "p99": 1317,
+   "max": 1580,
+   "throughput": 8.367,
+   "kind_p99": {
+    "cpu": 917,
+    "io": 1511,
+    "net": 286
+   },
+   "kind_p50": {
+    "cpu": 509,
+    "io": 654,
+    "net": 97
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 1353,
+   "fault_p50": 514,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.33210332103321033,
+   "fault_share": 0.3341708542713568,
+   "round": 1,
+   "group": "rr",
+   "seed": 1001
+  },
+  {
+   "tasks": 1238,
+   "ok": 1041,
+   "fail": 197,
+   "fail_by": {
+    "submit/8": 197
+   },
+   "p50": 571,
+   "p99": 1634,
+   "max": 1887,
+   "throughput": 6.94,
+   "kind_p99": {
+    "cpu": 1384,
+    "io": 1725,
+    "net": 350
+   },
+   "kind_p50": {
+    "cpu": 594,
+    "io": 1055,
+    "net": 116
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 1786,
+   "fault_p50": 647,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.48535564853556484,
+   "fault_share": 0.0,
+   "round": 2,
+   "group": "score_nopred",
+   "seed": 1002
+  },
+  {
+   "tasks": 1238,
+   "ok": 894,
+   "fail": 344,
+   "fail_by": {
+    "submit/8": 344
+   },
+   "p50": 551,
+   "p99": 2868,
+   "max": 6086,
+   "throughput": 5.96,
+   "kind_p99": {
+    "cpu": 1391,
+    "io": 5394,
+    "net": 500
+   },
+   "kind_p50": {
+    "cpu": 589,
+    "io": 1242,
+    "net": 135
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 2266,
+   "fault_p50": 665,
+   "reaction_s": 6.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.4579831932773109,
+   "fault_share": 0.0,
+   "round": 2,
+   "group": "score",
+   "seed": 1002
+  },
+  {
+   "tasks": 1238,
+   "ok": 1135,
+   "fail": 103,
+   "fail_by": {
+    "submit/8": 103
+   },
+   "p50": 704,
+   "p99": 3735,
+   "max": 5260,
+   "throughput": 7.567,
+   "kind_p99": {
+    "cpu": 2081,
+    "io": 4511,
+    "net": 652
+   },
+   "kind_p50": {
+    "cpu": 733,
+    "io": 1358,
+    "net": 193
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 4368,
+   "fault_p50": 793,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.3319327731092437,
+   "fault_share": 0.3333333333333333,
+   "round": 2,
+   "group": "rr",
+   "seed": 1002
+  },
+  {
+   "tasks": 1238,
+   "ok": 1233,
+   "fail": 5,
+   "fail_by": {
+    "submit/8": 4,
+    "exit/0": 1
+   },
+   "p50": 506,
+   "p99": 1736,
+   "max": 2689,
+   "throughput": 8.22,
+   "kind_p99": {
+    "cpu": 1677,
+    "io": 2038,
+    "net": 412
+   },
+   "kind_p50": {
+    "cpu": 558,
+    "io": 620,
+    "net": 123
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 1983,
+   "fault_p50": 557,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.24686192468619247,
+   "fault_share": 0.2512820512820513,
+   "round": 2,
+   "group": "wrr",
+   "seed": 1002
+  },
+  {
+   "tasks": 1200,
+   "ok": 1094,
+   "fail": 106,
+   "fail_by": {
+    "submit/8": 106
+   },
+   "p50": 450,
+   "p99": 1980,
+   "max": 2544,
+   "throughput": 7.293,
+   "kind_p99": {
+    "cpu": 1980,
+    "io": 2350,
+    "net": 371
+   },
+   "kind_p50": {
+    "cpu": 548,
+    "io": 642,
+    "net": 104
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 2325,
+   "fault_p50": 626,
+   "reaction_s": 6.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.47555555555555556,
+   "fault_share": 0.0,
+   "round": 3,
+   "group": "score",
+   "seed": 1003
+  },
+  {
+   "tasks": 1200,
+   "ok": 1167,
+   "fail": 33,
+   "fail_by": {
+    "submit/8": 33
+   },
+   "p50": 423,
+   "p99": 2205,
+   "max": 3666,
+   "throughput": 7.78,
+   "kind_p99": {
+    "cpu": 1389,
+    "io": 3259,
+    "net": 343
+   },
+   "kind_p50": {
+    "cpu": 492,
+    "io": 599,
+    "net": 102
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 2729,
+   "fault_p50": 549,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.33480176211453744,
+   "fault_share": 0.3341232227488152,
+   "round": 3,
+   "group": "rr",
+   "seed": 1003
+  },
+  {
+   "tasks": 1200,
+   "ok": 1192,
+   "fail": 8,
+   "fail_by": {
+    "submit/8": 8
+   },
+   "p50": 467,
+   "p99": 1712,
+   "max": 3327,
+   "throughput": 7.947,
+   "kind_p99": {
+    "cpu": 1449,
+    "io": 2346,
+    "net": 312
+   },
+   "kind_p50": {
+    "cpu": 537,
+    "io": 549,
+    "net": 111
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 2182,
+   "fault_p50": 556,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.2511013215859031,
+   "fault_share": 0.25118483412322273,
+   "round": 3,
+   "group": "wrr",
+   "seed": 1003
+  },
+  {
+   "tasks": 1200,
+   "ok": 1036,
+   "fail": 164,
+   "fail_by": {
+    "submit/8": 164
+   },
+   "p50": 444,
+   "p99": 1625,
+   "max": 2252,
+   "throughput": 6.907,
+   "kind_p99": {
+    "cpu": 1261,
+    "io": 1954,
+    "net": 293
+   },
+   "kind_p50": {
+    "cpu": 562,
+    "io": 652,
+    "net": 100
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1828,
+   "fault_p50": 665,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.21238938053097345,
+   "fault_share": 0.0,
+   "round": 3,
+   "group": "score_nopred",
+   "seed": 1003
+  },
+  {
+   "tasks": 1236,
+   "ok": 1191,
+   "fail": 45,
+   "fail_by": {
+    "submit/8": 45
+   },
+   "p50": 502,
+   "p99": 1955,
+   "max": 4255,
+   "throughput": 7.94,
+   "kind_p99": {
+    "cpu": 1564,
+    "io": 3134,
+    "net": 361
+   },
+   "kind_p50": {
+    "cpu": 545,
+    "io": 768,
+    "net": 110
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 3019,
+   "fault_p50": 590,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.3333333333333333,
+   "fault_share": 0.3333333333333333,
+   "round": 4,
+   "group": "rr",
+   "seed": 1004
+  },
+  {
+   "tasks": 1236,
+   "ok": 1228,
+   "fail": 8,
+   "fail_by": {
+    "submit/8": 8
+   },
+   "p50": 505,
+   "p99": 1803,
+   "max": 3211,
+   "throughput": 8.187,
+   "kind_p99": {
+    "cpu": 1469,
+    "io": 2889,
+    "net": 439
+   },
+   "kind_p50": {
+    "cpu": 572,
+    "io": 583,
+    "net": 129
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 2660,
+   "fault_p50": 610,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.2490842490842491,
+   "fault_share": 0.25059101654846333,
+   "round": 4,
+   "group": "wrr",
+   "seed": 1004
+  },
+  {
+   "tasks": 1236,
+   "ok": 1137,
+   "fail": 99,
+   "fail_by": {
+    "submit/8": 99
+   },
+   "p50": 549,
+   "p99": 1552,
+   "max": 3241,
+   "throughput": 7.58,
+   "kind_p99": {
+    "cpu": 1155,
+    "io": 1841,
+    "net": 328
+   },
+   "kind_p50": {
+    "cpu": 593,
+    "io": 695,
+    "net": 115
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1561,
+   "fault_p50": 578,
+   "reaction_s": 7.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.2783882783882784,
+   "fault_share": 0.0,
+   "round": 4,
+   "group": "score_nopred",
+   "seed": 1004
+  },
+  {
+   "tasks": 1236,
+   "ok": 1138,
+   "fail": 98,
+   "fail_by": {
+    "submit/8": 98
+   },
+   "p50": 441,
+   "p99": 1855,
+   "max": 2775,
+   "throughput": 7.587,
+   "kind_p99": {
+    "cpu": 1381,
+    "io": 2129,
+    "net": 485
+   },
+   "kind_p50": {
+    "cpu": 558,
+    "io": 530,
+    "net": 105
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1956,
+   "fault_p50": 686,
+   "reaction_s": 7.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.21245421245421245,
+   "fault_share": 0.0,
+   "round": 4,
+   "group": "score",
+   "seed": 1004
+  },
+  {
+   "tasks": 1175,
+   "ok": 1173,
+   "fail": 2,
+   "fail_by": {
+    "submit/8": 2
+   },
+   "p50": 315,
+   "p99": 976,
+   "max": 1463,
+   "throughput": 7.82,
+   "kind_p99": {
+    "cpu": 1049,
+    "io": 894,
+    "net": 189
+   },
+   "kind_p50": {
+    "cpu": 369,
+    "io": 291,
+    "net": 77
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1074,
+   "fault_p50": 387,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.25112107623318386,
+   "fault_share": 0.25,
+   "round": 5,
+   "group": "wrr",
+   "seed": 1005
+  },
+  {
+   "tasks": 1175,
+   "ok": 1162,
+   "fail": 13,
+   "fail_by": {
+    "submit/8": 13
+   },
+   "p50": 316,
+   "p99": 800,
+   "max": 2401,
+   "throughput": 7.747,
+   "kind_p99": {
+    "cpu": 755,
+    "io": 853,
+    "net": 325
+   },
+   "kind_p50": {
+    "cpu": 375,
+    "io": 292,
+    "net": 76
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 853,
+   "fault_p50": 404,
+   "reaction_s": 7.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.18385650224215247,
+   "fault_share": 0.0,
+   "round": 5,
+   "group": "score_nopred",
+   "seed": 1005
+  },
+  {
+   "tasks": 1175,
+   "ok": 1137,
+   "fail": 38,
+   "fail_by": {
+    "submit/8": 35,
+    "exit/0": 3
+   },
+   "p50": 307,
+   "p99": 776,
+   "max": 977,
+   "throughput": 7.58,
+   "kind_p99": {
+    "cpu": 703,
+    "io": 883,
+    "net": 184
+   },
+   "kind_p50": {
+    "cpu": 369,
+    "io": 291,
+    "net": 75
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 848,
+   "fault_p50": 397,
+   "reaction_s": 7.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.13004484304932734,
+   "fault_share": 0.0,
+   "round": 5,
+   "group": "score",
+   "seed": 1005
+  },
+  {
+   "tasks": 1175,
+   "ok": 1167,
+   "fail": 8,
+   "fail_by": {
+    "submit/8": 8
+   },
+   "p50": 323,
+   "p99": 1087,
+   "max": 1717,
+   "throughput": 7.78,
+   "kind_p99": {
+    "cpu": 1037,
+    "io": 1192,
+    "net": 207
+   },
+   "kind_p50": {
+    "cpu": 369,
+    "io": 352,
+    "net": 74
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1192,
+   "fault_p50": 390,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.33183856502242154,
+   "fault_share": 0.3333333333333333,
+   "round": 5,
+   "group": "rr",
+   "seed": 1005
+  },
+  {
+   "tasks": 1282,
+   "ok": 1194,
+   "fail": 88,
+   "fail_by": {
+    "submit/8": 87,
+    "exit/0": 1
+   },
+   "p50": 388,
+   "p99": 1986,
+   "max": 6001,
+   "throughput": 7.96,
+   "kind_p99": {
+    "cpu": 1646,
+    "io": 4684,
+    "net": 769
+   },
+   "kind_p50": {
+    "cpu": 473,
+    "io": 499,
+    "net": 107
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 4116,
+   "fault_p50": 500,
+   "reaction_s": 7.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.1484375,
+   "fault_share": 0.0,
+   "round": 6,
+   "group": "score_nopred",
+   "seed": 1006
+  },
+  {
+   "tasks": 1282,
+   "ok": 1195,
+   "fail": 87,
+   "fail_by": {
+    "submit/8": 87
+   },
+   "p50": 455,
+   "p99": 2168,
+   "max": 2790,
+   "throughput": 7.967,
+   "kind_p99": {
+    "cpu": 1432,
+    "io": 2420,
+    "net": 643
+   },
+   "kind_p50": {
+    "cpu": 537,
+    "io": 501,
+    "net": 118
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 2185,
+   "fault_p50": 511,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.203125,
+   "fault_share": 0.0,
+   "round": 6,
+   "group": "score",
+   "seed": 1006
+  },
+  {
+   "tasks": 1282,
+   "ok": 1152,
+   "fail": 130,
+   "fail_by": {
+    "submit/8": 65,
+    "marksent/4": 2,
+    "allocate/4": 59,
+    "allocate/8": 4
+   },
+   "p50": 598,
+   "p99": 2354,
+   "max": 6584,
+   "throughput": 7.68,
+   "kind_p99": {
+    "cpu": 2062,
+    "io": 2822,
+    "net": 650
+   },
+   "kind_p50": {
+    "cpu": 659,
+    "io": 785,
+    "net": 130
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 2394,
+   "fault_p50": 626,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.3359375,
+   "fault_share": 0.3333333333333333,
+   "round": 6,
+   "group": "rr",
+   "seed": 1006
+  },
+  {
+   "tasks": 1282,
+   "ok": 1272,
+   "fail": 10,
+   "fail_by": {
+    "submit/8": 10
+   },
+   "p50": 314,
+   "p99": 1557,
+   "max": 3897,
+   "throughput": 8.48,
+   "kind_p99": {
+    "cpu": 1623,
+    "io": 2942,
+    "net": 385
+   },
+   "kind_p50": {
+    "cpu": 377,
+    "io": 288,
+    "net": 82
+   },
+   "fault_node": "lmtest-worker2",
+   "fault_p99": 1123,
+   "fault_p50": 385,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.2490272373540856,
+   "fault_share": 0.24882629107981222,
+   "round": 6,
+   "group": "wrr",
+   "seed": 1006
+  },
+  {
+   "tasks": 1190,
+   "ok": 1106,
+   "fail": 84,
+   "fail_by": {
+    "submit/8": 84
+   },
+   "p50": 316,
+   "p99": 1601,
+   "max": 11288,
+   "throughput": 7.373,
+   "kind_p99": {
+    "cpu": 1161,
+    "io": 1744,
+    "net": 227
+   },
+   "kind_p50": {
+    "cpu": 382,
+    "io": 426,
+    "net": 80
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 1729,
+   "fault_p50": 639,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.51171875,
+   "fault_share": 0.0,
+   "round": 7,
+   "group": "score",
+   "seed": 1007
+  },
+  {
+   "tasks": 1190,
+   "ok": 1189,
+   "fail": 1,
+   "fail_by": {
+    "submit/8": 1
+   },
+   "p50": 315,
+   "p99": 982,
+   "max": 1181,
+   "throughput": 7.927,
+   "kind_p99": {
+    "cpu": 891,
+    "io": 1140,
+    "net": 221
+   },
+   "kind_p50": {
+    "cpu": 391,
+    "io": 344,
+    "net": 74
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 1077,
+   "fault_p50": 471,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.33203125,
+   "fault_share": 0.3342776203966006,
+   "round": 7,
+   "group": "rr",
+   "seed": 1007
+  },
+  {
+   "tasks": 1190,
+   "ok": 1157,
+   "fail": 33,
+   "fail_by": {
+    "submit/8": 33
+   },
+   "p50": 578,
+   "p99": 3438,
+   "max": 10096,
+   "throughput": 7.713,
+   "kind_p99": {
+    "cpu": 2665,
+    "io": 8948,
+    "net": 2288
+   },
+   "kind_p50": {
+    "cpu": 660,
+    "io": 686,
+    "net": 137
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 2385,
+   "fault_p50": 658,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.5,
+   "fault_share": 0.5014164305949008,
+   "round": 7,
+   "group": "wrr",
+   "seed": 1007
+  },
+  {
+   "tasks": 1190,
+   "ok": 1048,
+   "fail": 142,
+   "fail_by": {
+    "exit/0": 2,
+    "submit/8": 63,
+    "allocate/4": 21,
+    "allocate/8": 56
+   },
+   "p50": 311,
+   "p99": 1028,
+   "max": 1706,
+   "throughput": 6.987,
+   "kind_p99": {
+    "cpu": 1031,
+    "io": 1038,
+    "net": 281
+   },
+   "kind_p50": {
+    "cpu": 410,
+    "io": 360,
+    "net": 74
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 1067,
+   "fault_p50": 542,
+   "reaction_s": 6.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.39453125,
+   "fault_share": 0.0,
+   "round": 7,
+   "group": "score_nopred",
+   "seed": 1007
+  },
+  {
+   "tasks": 1189,
+   "ok": 1182,
+   "fail": 7,
+   "fail_by": {
+    "submit/8": 7
+   },
+   "p50": 304,
+   "p99": 1256,
+   "max": 2364,
+   "throughput": 7.88,
+   "kind_p99": {
+    "cpu": 1375,
+    "io": 1174,
+    "net": 247
+   },
+   "kind_p50": {
+    "cpu": 382,
+    "io": 245,
+    "net": 73
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 1622,
+   "fault_p50": 417,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.3346938775510204,
+   "fault_share": 0.33248730964467005,
+   "round": 8,
+   "group": "rr",
+   "seed": 1008
+  },
+  {
+   "tasks": 1189,
+   "ok": 1187,
+   "fail": 2,
+   "fail_by": {
+    "submit/8": 2
+   },
+   "p50": 319,
+   "p99": 1186,
+   "max": 1745,
+   "throughput": 7.913,
+   "kind_p99": {
+    "cpu": 1197,
+    "io": 1331,
+    "net": 237
+   },
+   "kind_p50": {
+    "cpu": 452,
+    "io": 280,
+    "net": 84
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 1427,
+   "fault_p50": 492,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.24897959183673468,
+   "fault_share": 0.2481012658227848,
+   "round": 8,
+   "group": "wrr",
+   "seed": 1008
+  },
+  {
+   "tasks": 1189,
+   "ok": 1179,
+   "fail": 10,
+   "fail_by": {
+    "submit/8": 10
+   },
+   "p50": 309,
+   "p99": 875,
+   "max": 1288,
+   "throughput": 7.86,
+   "kind_p99": {
+    "cpu": 885,
+    "io": 880,
+    "net": 228
+   },
+   "kind_p50": {
+    "cpu": 408,
+    "io": 277,
+    "net": 82
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 764,
+   "fault_p50": 433,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.17551020408163265,
+   "fault_share": 0.0,
+   "round": 8,
+   "group": "score_nopred",
+   "seed": 1008
+  },
+  {
+   "tasks": 1189,
+   "ok": 1174,
+   "fail": 15,
+   "fail_by": {
+    "submit/8": 15
+   },
+   "p50": 323,
+   "p99": 985,
+   "max": 1156,
+   "throughput": 7.827,
+   "kind_p99": {
+    "cpu": 960,
+    "io": 1076,
+    "net": 226
+   },
+   "kind_p50": {
+    "cpu": 482,
+    "io": 299,
+    "net": 87
+   },
+   "fault_node": "lmtest-worker3",
+   "fault_p99": 1062,
+   "fault_p50": 536,
+   "reaction_s": 4.0,
+   "reaction_status": "ok",
+   "baseline_share": 0.22540983606557377,
+   "fault_share": 0.0,
+   "round": 8,
+   "group": "score",
+   "seed": 1008
+  },
+  {
+   "tasks": 1199,
+   "ok": 1084,
+   "fail": 115,
+   "fail_by": {
+    "submit/8": 115
+   },
+   "p50": 432,
+   "p99": 7324,
+   "max": 10546,
+   "throughput": 7.227,
+   "kind_p99": {
+    "cpu": 4243,
+    "io": 8673,
+    "net": 1802
+   },
+   "kind_p50": {
+    "cpu": 672,
+    "io": 556,
+    "net": 142
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 8174,
+   "fault_p50": 825,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.4979757085020243,
+   "fault_share": 0.49874686716791977,
+   "round": 9,
+   "group": "wrr",
+   "seed": 1009
+  },
+  {
+   "tasks": 1199,
+   "ok": 1064,
+   "fail": 135,
+   "fail_by": {
+    "submit/8": 134,
+    "exit/0": 1
+   },
+   "p50": 527,
+   "p99": 2123,
+   "max": 3969,
+   "throughput": 7.093,
+   "kind_p99": {
+    "cpu": 1498,
+    "io": 3012,
+    "net": 318
+   },
+   "kind_p50": {
+    "cpu": 638,
+    "io": 711,
+    "net": 109
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 2921,
+   "fault_p50": 767,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.25101214574898784,
+   "fault_share": 0.0,
+   "round": 9,
+   "group": "score_nopred",
+   "seed": 1009
+  },
+  {
+   "tasks": 1199,
+   "ok": 1046,
+   "fail": 153,
+   "fail_by": {
+    "submit/8": 103,
+    "allocate/8": 50
+   },
+   "p50": 394,
+   "p99": 1882,
+   "max": 3655,
+   "throughput": 6.973,
+   "kind_p99": {
+    "cpu": 1608,
+    "io": 2357,
+    "net": 495
+   },
+   "kind_p50": {
+    "cpu": 543,
+    "io": 442,
+    "net": 98
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 2357,
+   "fault_p50": 713,
+   "reaction_s": 5.5,
+   "reaction_status": "ok",
+   "baseline_share": 0.2834008097165992,
+   "fault_share": 0.0,
+   "round": 9,
+   "group": "score",
+   "seed": 1009
+  },
+  {
+   "tasks": 1199,
+   "ok": 1175,
+   "fail": 24,
+   "fail_by": {
+    "submit/8": 24
+   },
+   "p50": 374,
+   "p99": 2432,
+   "max": 5863,
+   "throughput": 7.833,
+   "kind_p99": {
+    "cpu": 1855,
+    "io": 4947,
+    "net": 637
+   },
+   "kind_p50": {
+    "cpu": 558,
+    "io": 400,
+    "net": 99
+   },
+   "fault_node": "lm-worker-1",
+   "fault_p99": 4089,
+   "fault_p50": 652,
+   "reaction_s": null,
+   "reaction_status": "未降",
+   "baseline_share": 0.3319838056680162,
+   "fault_share": 0.3333333333333333,
+   "round": 9,
+   "group": "rr",
+   "seed": 1009
+  }
+ ],
+ "summary": {
+  "rr": {
+   "p50": [
+    437.2,
+    132.36884494136493,
+    10
+   ],
+   "p99": [
+    1861.7,
+    853.9646167533328,
+    10
+   ],
+   "max": [
+    3478.6,
+    1935.660335217244,
+    10
+   ],
+   "fault_p99": [
+    2336.1,
+    1195.610532089963,
+    10
+   ],
+   "throughput": [
+    7.8614,
+    0.2108439127780445,
+    10
+   ],
+   "fail": [
+    36.7,
+    44.72645252594437,
+    10
+   ],
+   "reaction_median": null,
+   "reaction_ok": 0,
+   "reaction_counted": 10
+  },
+  "wrr": {
+   "p50": [
+    432.3,
+    92.28946009401315,
+    10
+   ],
+   "p99": [
+    2227.5,
+    1916.4670185874145,
+    10
+   ],
+   "max": [
+    4120.7,
+    3359.9697435807034,
+    10
+   ],
+   "fault_p99": [
+    2392.5,
+    2101.303682637678,
+    10
+   ],
+   "throughput": [
+    7.98,
+    0.3600206784184609,
+    10
+   ],
+   "fail": [
+    18.9,
+    35.0061899288302,
+    10
+   ],
+   "reaction_median": null,
+   "reaction_ok": 0,
+   "reaction_counted": 10
+  },
+  "score_nopred": {
+   "p50": [
+    434.4,
+    100.90721810983923,
+    10
+   ],
+   "p99": [
+    1427.4,
+    444.2217164134745,
+    10
+   ],
+   "max": [
+    2610.4,
+    1443.9367637738774,
+    10
+   ],
+   "fault_p99": [
+    1772.8,
+    1026.261478485002,
+    10
+   ],
+   "throughput": [
+    7.4281,
+    0.40455035395966327,
+    10
+   ],
+   "fail": [
+    101.7,
+    62.13256437292409,
+    10
+   ],
+   "reaction_median": 5.75,
+   "reaction_ok": 10,
+   "reaction_counted": 10
+  },
+  "score": {
+   "p50": [
+    426.7,
+    92.9313366595646,
+    10
+   ],
+   "p99": [
+    1705.7,
+    602.3227355643963,
+    10
+   ],
+   "max": [
+    5239.6,
+    5888.502605360155,
+    10
+   ],
+   "fault_p99": [
+    1767.6,
+    545.9249439661504,
+    10
+   ],
+   "throughput": [
+    7.3354,
+    0.557552229740756,
+    10
+   ],
+   "fail": [
+    115.6,
+    90.94955866974959,
+    10
+   ],
+   "reaction_median": 6.0,
+   "reaction_ok": 10,
+   "reaction_counted": 10
+  }
+ },
+ "compare": {
+  "wrr.p50": {
+   "diff": -4.899999999999977,
+   "d": -0.0429437663891763,
+   "p": 0.9235005735398399
+  },
+  "wrr.p99": {
+   "diff": 365.79999999999995,
+   "d": 0.2465634384889341,
+   "p": 0.581405688432697
+  },
+  "wrr.fault_p99": {
+   "diff": 56.40000000000009,
+   "d": 0.032991591523700625,
+   "p": 0.9411922516021639
+  },
+  "score_nopred.p50": {
+   "diff": -2.8000000000000114,
+   "d": -0.023790497924097723,
+   "p": 0.9575748099777619
+  },
+  "score_nopred.p99": {
+   "diff": -434.29999999999995,
+   "d": -0.6380597865889831,
+   "p": 0.15365339334252795
+  },
+  "score_nopred.fault_p99": {
+   "diff": -563.3,
+   "d": -0.505583479862594,
+   "p": 0.25825758467480575
+  },
+  "score.p50": {
+   "diff": -10.5,
+   "d": -0.09181299416704389,
+   "p": 0.837337668921182
+  },
+  "score.p99": {
+   "diff": -156.0,
+   "d": -0.2111148017014068,
+   "p": 0.6368789322044974
+  },
+  "score.fault_p99": {
+   "diff": -568.5,
+   "d": -0.61169383326007,
+   "p": 0.17137813417985293
+  },
+  "score_vs_nopred.p50": {
+   "diff": -7.699999999999989,
+   "d": -0.07938038872540319,
+   "p": 0.8591157082182623
+  },
+  "score_vs_nopred.p99": {
+   "diff": 278.29999999999995,
+   "d": 0.5258785887547811,
+   "p": 0.23963473003020186
+  },
+  "score_vs_nopred.fault_p99": {
+   "diff": -5.2000000000000455,
+   "d": -0.00632631807564278,
+   "p": 0.9887134397844674
+  }
+ }
+}
