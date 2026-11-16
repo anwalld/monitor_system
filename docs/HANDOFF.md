@@ -28,7 +28,7 @@
 
 ## 下一步
 
-1. **M10 暴露的问题（可做新变更）**：本系统把任务集中到少数节点时撞上 Worker 并发上限（Submit RESOURCE_EXHAUSTED），失败数是轮询的约 3 倍。方向：Worker 上报 `max_concurrent` 与当前运行数并纳入选择，或 Manager 按拒收事件降权。改完用 `experiments/compare.py` 同样的参数重跑对照（命令见 README“对照实验”）。
+1. **并发上限感知**（变更 `capacity-aware-allocation`，分支同名，PR 待合并）：Worker 上报 `max_concurrent`，Manager 跳过在途已满的节点。复跑后本系统失败数从 116/次降到 11/次（三组最少），P99 比轮询低 33%（不显著）。虚拟机上已部署：Manager 镜像 `lm-manager:latest`（回滚 `lm-manager:m10`），Worker 二进制（回滚 `/opt/lm/bin/worker.m10`）；两个测试容器挂的是 `build-linux`，重启即用新版。合并前如果要回到 main 的行为，按上面两个回滚点换回。
 2. **加机器后重跑 M10**：同一套工具，`--node` 换成真实 Worker 即可。
 3. **等用户决定**：
    - 第二块网卡能否上外网（M0 2.4）；是否再加 2 台以上 Worker（M0 4.2、M1 7.1、M5b 5.4、M6 4.3/4.4，也是 M10 的前提）。

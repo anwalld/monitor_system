@@ -348,4 +348,65 @@ TEST(NodeTablePolicy, ScoreNoPredIgnoresPrediction) {
   EXPECT_NEAR(t.select(1200, 0.0, Policy::kScoreNoPred).pick->prob, 0.5, 1e-9);
 }
 
+// ---------- 在途已满的节点不参与选择 ----------
+
+lm::Sample capped(const std::string& id, uint64_t seq, uint32_t cap) {
+  lm::Sample s = healthy(id, seq);
+  s.set_max_concurrent(cap);
+  return s;
+}
+
+TEST(NodeTableCapacity, FullNodeSkippedUntilTaskEnds) {
+  NodeTable t({});
+  t.apply(capped("w1", 1, 2), "10.0.0.11", 1000, 0, nullptr);
+  t.apply(capped("w2", 1, 0), "10.0.0.12", 1000, 0, nullptr);
+  EXPECT_EQ(t.get("w1")->max_concurrent, 2U);
+  // u = 0 总是选排在前面的 w1，直到它满
+  EXPECT_EQ(t.allocate(1100, 0.0, "a", 0).pick->node_id, "w1");
+  EXPECT_EQ(t.allocate(1100, 0.0, "b", 0).pick->node_id, "w1");
+  const auto r = t.allocate(1100, 0.0, "c", 0);
+  ASSERT_TRUE(r.pick);
+  EXPECT_EQ(r.pick->node_id, "w2");
+  EXPECT_EQ(r.full, 1U);
+  EXPECT_NEAR(r.pick->prob, 1.0, 1e-9);
+  // w2 上限为 0：不限制
+  for (int i = 0; i < 20; ++i) EXPECT_EQ(t.allocate(1100, 0.0, "d" + std::to_string(i), 0).pick->node_id, "w2");
+  // w1 的一个任务结束后重新参与
+  t.mark_sent("a", 1200);
+  t.on_event("a", lm::TaskEvent::RECEIVED, 1300);
+  t.on_event("a", lm::TaskEvent::DONE, 1400);
+  EXPECT_EQ(t.allocate(1500, 0.0, "e", 0).pick->node_id, "w1");
+}
+
+TEST(NodeTableCapacity, AllFullIsExhaustedAndBaselinesIgnoreCap) {
+  NodeTable t({});
+  t.apply(capped("w1", 1, 1), "10.0.0.11", 1000, 0, nullptr);
+  ASSERT_TRUE(t.allocate(1100, 0.5, "a", 0).pick);
+  const auto r = t.allocate(1100, 0.5, "b", 0);
+  EXPECT_FALSE(r.pick);
+  EXPECT_EQ(r.full, 1U);
+  EXPECT_EQ(r.candidates, 0U);
+  EXPECT_FALSE(t.allocate(1100, 0.5, "c", 0, Policy::kScoreNoPred).pick);
+  EXPECT_TRUE(t.allocate(1100, 0.5, "d", 0, Policy::kRoundRobin).pick);  // 对照策略不看上限
+}
+
+TEST(NodeTableCapacity, FullDoesNotChangeStateMachineProbability) {
+  NodeTable::Options o;
+  o.breaker.slow_start_ms = 0;
+  NodeTable t(o);
+  lm::Sample a = healthy_sample("w1", 1);
+  a.set_max_concurrent(1);
+  t.apply(a, "10.0.0.11", 1000, 1000, nullptr);
+  t.apply(healthy_sample("w2", 1), "10.0.0.12", 1000, 1000, nullptr);
+  std::vector<lm::manager::StateChange> ch;
+  std::vector<lm::manager::RescueStart> rs;
+  t.tick_states(1100, 1100, &ch, &rs);
+  ASSERT_TRUE(t.allocate(1100, 0.0, "x", 0).pick);  // w1 满
+  ch.clear();
+  t.tick_states(1200, 1200, &ch, &rs);
+  EXPECT_GT(t.get("w1")->prob, 0.0);  // 状态机里的概率不因满载变 0
+  EXPECT_TRUE(rs.empty());
+  EXPECT_EQ(t.mode("w1"), lm::manager::NodeMode::kNormal);
+}
+
 }  // namespace

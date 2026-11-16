@@ -47,7 +47,8 @@ grpc::Status SchedulerService::Allocate(grpc::ServerContext* /*ctx*/, const lm::
     rejected_.fetch_add(1, std::memory_order_relaxed);
     return {grpc::StatusCode::RESOURCE_EXHAUSTED,
             "没有可用节点：总数 " + std::to_string(r.total) + "，剔除 " + std::to_string(r.evicted) +
-                "，失联 " + std::to_string(r.lost)};
+                "，失联 " + std::to_string(r.lost) + "，在途已满 " +
+                std::to_string(r.full)};
   }
   if (task_sink_) {
     TaskChange c;

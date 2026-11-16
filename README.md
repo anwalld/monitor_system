@@ -274,6 +274,8 @@ python3 experiments/compare_stats.py experiments/results/m10-3node --md summary.
 
 本系统每次都在约 6 秒内避开被干扰的节点，P99 低 8%–23%、干扰期 P99 低约 24%，但轮间波动大，10 轮下不显著（p 0.15–0.64）；预测没有作用。本系统的失败反而更多：一台节点被长期占用、一台被干扰时，任务集中到剩下的 2 核容器上，撞上 Worker 的并发上限（评分不知道这个上限）。节点数远少于开发文档的十几台，结论只在这个规模下成立；明细与分析见 `experiments/results/m10-3node/summary.md` 和 OpenSpec 变更 `m10-comparison` 的 tasks.md。
 
+**并发上限感知（M10 之后的修正，2026-11-16 晚）**：Worker 在上报里带上任务并发上限（`Sample.max_concurrent`），Manager 分配时跳过在途任务数已达上限的节点（只影响这一次选择，不改分数和状态机）。同样参数和种子复跑轮询、加权轮询、本系统各 10 轮：本系统每次失败从 116 降到 11（三组最少，Worker 拒收降到 0，剩下的是三台同时满载时 Allocate 直接拒绝）；P99 924 ms，比轮询低 33%，干扰期 P99 低 34%，轮间标准差从 602 ms 降到 124 ms；逐轮配对 8–9/10 轮优于轮询，但 p 0.12–0.20，仍不算显著。明细见 `experiments/results/cap-3node/summary.md`。
+
 ### 查看数据
 
 ```bash
@@ -297,7 +299,7 @@ redis-cli XREVRANGE stream:events + - COUNT 10            # 最近 10 条事件
 | M7 存储与看板 | 事件流、MySQL 冷数据、REST/WebSocket、Vue 看板、Nginx | 验收完成（1 台虚拟机 + Mac 上 1 个测试用 Worker 容器）：每节点每 5 分钟一行（300 样本），超时后迟到的完成改为 done；MySQL 断开 70 秒调度不受影响、恢复后一行不少；看板断线和 Manager 重启后事件不丢不重 |
 | M8 AI 第一批 | 异常检测、LLM 诊断、诊断页与设置页（BYOK） | 验收完成（虚拟机 + Mac 测试节点）：16 次注入全部检出，延迟 2.5–5 秒；DeepSeek 诊断 JSON 全部合格；停 AI、阻断 MySQL 时调度 0 失败 |
 | M9 AI 第二批 | 运维问答（MCP）、负载预测、日报 | 验收完成（虚拟机 + Mac 测试节点）：DeepSeek 问答 20 题全对，平均 1 次工具调用、2.3 秒；日报正文数字与统计一致（提示词修正后 5/5）；预测未优于朴素基线，推送默认关闭；停 AI 时调度 0 失败 |
-| M10 对照实验 | 与轮询、加权轮询对比 | 三节点完成（虚拟机 + Mac 上 2 个限核容器，四组各 10 轮）：本系统约 6 秒避开被干扰节点，干扰期 P99 低约 24% 但不显著；并发上限导致失败更多；预测无作用。待十几台 Worker 重跑 |
+| M10 对照实验 | 与轮询、加权轮询对比 | 三节点完成（虚拟机 + Mac 上 2 个限核容器，四组各 10 轮）：本系统约 6 秒避开被干扰节点，干扰期 P99 低约 24% 但不显著；预测无作用。加上并发上限感知后失败数最少、P99 低约 33%（不显著）。待十几台 Worker 重跑 |
 
 每个里程碑对应一个 OpenSpec 变更：进行中的在 `openspec/changes/`，完成的归档在 `openspec/changes/archive/`（M0–M10 已归档），当前需求规格在 `openspec/specs/`。开发流程见 [OpenSpec](https://github.com/Fission-AI/OpenSpec)。
 

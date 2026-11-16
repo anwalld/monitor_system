@@ -29,6 +29,7 @@ struct NodeState {
   std::string node_id;
   std::string addr;            // Worker gRPC 地址：上报对端 IP + worker_port
   uint32_t ncpu = 0;
+  uint32_t max_concurrent = 0;  // Worker 上报的任务并发上限；0 = 不限制
   int64_t first_seen_wall_ms = 0;
   int64_t last_seen_wall_ms = 0;
   int64_t last_seen_mono_ms = 0;
@@ -124,6 +125,7 @@ struct SelectResult {
   std::size_t evicted = 0;
   std::size_t lost = 0;
   std::size_t rescue = 0;
+  std::size_t full = 0;  // 在途已满、本次跳过的节点数（默认策略）
   std::size_t candidates = 0;
 };
 

@@ -6,7 +6,7 @@
 ## Requirements
 
 ### Requirement: 候选集合与权重
-候选节点 SHALL 是状态为正常或慢启动、距上次上报不超过 3000 ms、关键指标未剔除、分数大于 0 的节点；剔除和急救状态的节点 MUST NOT 被选中。每个候选的权重 SHALL 为 `w = score × f_inflight × f_timeout × f_slow × f_pred`：`f_inflight`、`f_timeout` 按 `manager-inflight` 计算（慢启动中 `f_inflight` 取 1），`f_slow` 按 `manager-node-state` 计算，`f_pred` SHALL 取 `Advisor.PushPredictions` 最近一次推来的该节点因子，限幅到 [`advisor.min_factor`（默认 0.5）, 1.0]；预测过期（距推送超过 `ttl_ms`，ttl 为 0 时按 10000、上限 `advisor.max_ttl_ms` 60000）或从未收到时为 1.0。
+候选节点 SHALL 是状态为正常或慢启动、距上次上报不超过 3000 ms、关键指标未剔除、分数大于 0、且在途未满的节点；“在途未满”指节点最近一次上报的 `max_concurrent` 为 0，或 Manager 在途账中该节点的任务数（已分配、已发送、运行中）小于 `max_concurrent`。在途已满只影响本次选择，MUST NOT 改变分数、剔除与节点状态，也不计入状态机使用的选中概率；剔除和急救状态的节点 MUST NOT 被选中。每个候选的权重 SHALL 为 `w = score × f_inflight × f_timeout × f_slow × f_pred`：`f_inflight`、`f_timeout` 按 `manager-inflight` 计算（慢启动中 `f_inflight` 取 1），`f_slow` 按 `manager-node-state` 计算，`f_pred` SHALL 取 `Advisor.PushPredictions` 最近一次推来的该节点因子，限幅到 [`advisor.min_factor`（默认 0.5）, 1.0]；预测过期（距推送超过 `ttl_ms`，ttl 为 0 时按 10000、上限 `advisor.max_ttl_ms` 60000）或从未收到时为 1.0。
 
 #### Scenario: 剔除与失联的节点不参与
 - **WHEN** 节点 w1 正常（分数 0.8），w2 已剔除，w3 失联
@@ -32,6 +32,14 @@
 - **WHEN** 推来因子 0.1 或 1.5
 - **THEN** 记录为 0.5 和 1.0
 
+#### Scenario: 在途已满的节点不参与
+- **WHEN** w1 上报 `max_concurrent = 2`，已为它分配 2 个尚未结束的任务；w2 正常
+- **THEN** 下一次 Allocate 返回 w2；w1 的一个任务完成（DONE 事件）后，w1 重新参与选择
+
+#### Scenario: 不限制
+- **WHEN** w1 上报 `max_concurrent = 0`，在途 100 个任务
+- **THEN** w1 仍是候选
+
 ### Requirement: 加权随机抽样
 Manager SHALL 按候选节点 `node_id` 排序后计算权重前缀和，取 [0, 1) 均匀随机数 u，选中第一个前缀和大于 `u × 总权重` 的节点。每个节点被选中的概率 SHALL 等于其权重占总权重的比例。
 
@@ -49,7 +57,7 @@ Manager SHALL 按候选节点 `node_id` 排序后计算权重前缀和，取 [0,
 - `task_id` SHALL 为 `<Manager 启动时 Unix 毫秒的十六进制>-<从 1 开始的十进制序号>`，同一 Manager 进程内不重复。
 - `client_id` 为空或超过 64 字节时 SHALL 返回 `INVALID_ARGUMENT`。
 - `policy` 为空或 `score` 时 SHALL 按“候选集合与权重”“加权随机抽样”选择；为 `score_nopred`、`rr`、`wrr` 时 SHALL 按“对照分配策略”选择；其他取值 SHALL 返回 `INVALID_ARGUMENT`。`allocation.allow_policy` 为 false 时，非默认策略 SHALL 返回 `FAILED_PRECONDITION`。
-- 没有候选或总权重为 0 时 SHALL 返回 `RESOURCE_EXHAUSTED`，错误信息包含节点总数、剔除数、失联数。
+- 没有候选或总权重为 0 时 SHALL 返回 `RESOURCE_EXHAUSTED`，错误信息包含节点总数、剔除数、失联数，以及在途已满的节点数。
 - 无论哪种策略，选中后 SHALL 同样记入在途账（`manager-inflight`）并产生任务记录。
 - 处理过程中 MUST NOT 做任何 IO（不访问 Redis、MySQL）。
 

@@ -160,4 +160,16 @@ TEST(SchedulerService, PolicyDisabled) {
   EXPECT_TRUE(h.allocate("bench", &r, "score").ok());
 }
 
+TEST(SchedulerService, FullNodesInErrorMessage) {
+  Harness h;
+  lm::Sample s = healthy("w1", 1);
+  s.set_max_concurrent(1);
+  h.report(s, "10.0.0.1");
+  lm::AllocateResp r;
+  ASSERT_TRUE(h.allocate("bench", &r).ok());
+  const grpc::Status st = h.allocate("bench", &r);
+  EXPECT_EQ(st.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
+  EXPECT_NE(st.error_message().find("在途已满 1"), std::string::npos) << st.error_message();
+}
+
 }  // namespace

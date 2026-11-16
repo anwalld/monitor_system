@@ -71,6 +71,20 @@ TEST(Reporter, SendsLatestOnlyOnceAndSkipsWhenNothingNew) {
   EXPECT_EQ(rep.sent_ok(), 1U);
 }
 
+TEST(Reporter, AttachesMaxConcurrent) {
+  Reporter::SampleRing ring;
+  std::vector<uint32_t> got;
+  auto o = opts();
+  o.max_concurrent = 4;
+  Reporter rep(ring, [&](const lm::Sample& s) { got.push_back(s.max_concurrent()); }, o);
+  ring.publish(sample(1));
+  EXPECT_TRUE(rep.report_once());
+  Reporter rep0(ring, [&](const lm::Sample& s) { got.push_back(s.max_concurrent()); }, opts());
+  ring.publish(sample(2));
+  EXPECT_TRUE(rep0.report_once());
+  EXPECT_EQ(got, (std::vector<uint32_t>{4, 0}));
+}
+
 TEST(Reporter, DeadlineExceededCountsAsFailureWithoutRetry) {
   Server srv;
   srv.svc.delay_ms = 500;
