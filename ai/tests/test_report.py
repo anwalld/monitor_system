@@ -83,7 +83,7 @@ async def test_generate_ok_mismatch_and_disabled(cfg, monkeypatch):
     out = await rep.generate(DAY)
     assert out["stats"]["llm"] == "mismatch" and out["stats"]["mismatched"] == ["98.1"]
     assert "对不上统计" in out["markdown"] and "| w1 |" in out["markdown"]
-    assert rep.health()["last"]["llm"] == "mismatch"
+    assert rep.health()["last"]["llm"] == "mismatch" and rep.health()["last_day"] == DAY
 
 
 async def test_catch_up_only_after_time(cfg):

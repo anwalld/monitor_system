@@ -271,7 +271,7 @@ redis-cli XREVRANGE stream:events + - COUNT 10            # 最近 10 条事件
 | M9 AI 第二批 | 运维问答（MCP）、负载预测、日报 | 验收完成（虚拟机 + Mac 测试节点）：DeepSeek 问答 20 题全对，平均 1 次工具调用、2.3 秒；日报正文数字与统计一致（提示词修正后 5/5）；预测未优于朴素基线，推送默认关闭；停 AI 时调度 0 失败 |
 | M10 对照实验 | 与轮询、加权轮询对比 | |
 
-每个里程碑对应 `openspec/changes/` 下的一个变更，开发流程见 [OpenSpec](https://github.com/Fission-AI/OpenSpec)。
+每个里程碑对应一个 OpenSpec 变更：进行中的在 `openspec/changes/`，完成的归档在 `openspec/changes/archive/`（M0–M9 已归档），当前需求规格在 `openspec/specs/`。开发流程见 [OpenSpec](https://github.com/Fission-AI/OpenSpec)。
 
 ## 许可证
 

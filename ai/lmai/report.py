@@ -306,4 +306,5 @@ class Reporter:
             job = self.scheduler.get_job("daily_report")
             if job is not None and job.next_run_time is not None:
                 nxt = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S")
-        return {"enabled": self.cfg.report.enabled, "at": self.cfg.report.at, "next_run": nxt, "last": self.last}
+        return {"enabled": self.cfg.report.enabled, "at": self.cfg.report.at, "next_run": nxt,
+                "last_day": (self.last or {}).get("day"), "last": self.last}

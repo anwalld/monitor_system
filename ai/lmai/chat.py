@@ -65,7 +65,7 @@ async def run_chat(cfg: Config, llm: LlmClient, tools: Tools,
     msgs: list[dict[str, Any]] = [
         {"role": "system", "content": CHAT_SYSTEM.format(now=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}]
     for m in history:
-        msgs.append({"role": m["role"], "content": anon._sub(m["content"], anon.fwd) if anon.enabled else m["content"]})
+        msgs.append({"role": m["role"], "content": anon.hide_text(m["content"])})
     calls_used, tokens, model = 0, 0, None
     deadline = t0 + cfg.chat.timeout_s
     spec = openai_tools()
@@ -120,7 +120,7 @@ async def run_chat(cfg: Config, llm: LlmClient, tools: Tools,
                                       "summary": result_summary(c["name"], res)}
                 text = truncate_result(res, cfg.chat.result_max_bytes)
                 msgs.append({"role": "tool", "tool_call_id": c["id"],
-                             "content": anon._sub(text, anon.fwd) if anon.enabled else text})
+                             "content": anon.hide_text(text)})
     except LlmUnavailable as e:
         yield "error", {"reason": e.reason}
     except asyncio.TimeoutError:

@@ -1,10 +1,10 @@
 # 交接文档
 
-更新时间：2026-11-16 凌晨（UTC+8）。M0–M9 已提交并推送（M9 见下表）。虚拟机 compose 里跑着 M9 的 Manager、AI 服务和看板。下一个里程碑是 M10（对照实验）。
+更新时间：2026-11-16 中午（UTC+8）。M0–M9 已提交、推送，并全部归档到 `openspec/changes/archive/`；主 spec 在 `openspec/specs/`（30 个能力）。虚拟机 compose 里跑着 M9 的 Manager、AI 服务和看板。下一个里程碑是 M10（对照实验）。
 
 ## 现状
 
-| 里程碑 | OpenSpec 变更 | 任务 | 提交 | 说明 |
+| 里程碑 | OpenSpec 变更（已归档，目录加 `2026-11-16-` 前缀） | 任务 | 提交 | 说明 |
 |---|---|---|---|---|
 | M0 环境 | `m0-environment` | 9/11 | a7fe517 | 剩 2.4（第二块网卡要能上外网）、4.2（要 3 台 Worker） |
 | M1 骨架 | `m1-skeleton` | 21/22 | b99badf | 剩 7.1（要 3 台 Worker） |
@@ -19,23 +19,21 @@
 | M8 AI 第一批 | `m8-ai-diagnosis` | 12/12 | fd08f67 | 虚拟机 + Mac 测试节点验收；DeepSeek 真实诊断；`/opsx:verify` 已过 |
 | M9 AI 第二批 | `m9-ai-ops` | 20/20 | 1e87511 | 虚拟机 + Mac 测试节点验收；DeepSeek 问答 20/20、日报数字一致；预测未优于基线，推送默认关闭 |
 
-- 2026-11-15 对 M1–M8 跑过 `/opsx:verify`：代码与 spec 一致，222 个 C++ 测试（含 Redis/MySQL 集成测试）和 28 个 AI 测试全过；唯一未完成任务是 M1 7.1（要 3 台 Worker）。
-- 十二个变更都没有归档（`openspec/changes/archive/` 为空，`openspec/specs/` 也是空的）。归档顺序有依赖：先 M1 再 M3（M3 的 `manager-hot-storage` 增量依赖 M1 的能力）；先 M7b 再 M8、M9（M8、M9 对 `web-dashboard` 用了 MODIFIED）。M0、M1 有未完成任务，归档前先问用户。
-- **归档时要改的 spec 叠加问题**：后面的变更用 ADDED 加了“自本变更起……”来覆盖前面的说法，直接归档会让主 spec 里新旧两条并存、互相矛盾。要按顺序归档，并在归档前一个后，把后一个里的对应条目改成 MODIFIED：
-  - `manager-allocation`：m5a“候选集合与权重”（四个因子取 1）和“Scheduler.Allocate”（MarkSent 返回 UNIMPLEMENTED）← m5b“选择权重使用在途与超时因子”、m6“候选集合按节点状态”。
-  - `worker-task-exec` / `worker-rescue`：m5b“Probe”里“Rescue 返回 UNIMPLEMENTED”← m6“Rescue 流”。
-  - `manager-allocation`：m5b“f_pred 仍取 1”← m9“选择权重使用预测因子”。`manager-hot-storage`、`manager-web-api` 的 m9 条目是纯新增。
+- `/opsx:verify`：M1–M8 于 11-15 跑过，M9 于 11-16 跑过，代码与 spec 一致。M9 verify 提出的 4 条警告、2 条建议都已处理（见 M9 design「实现中的决定」末尾）。
+- **归档（2026-11-16）**：按 M0 → M9 的顺序全部归档。归档前把后面变更里“自本变更起……”覆盖前面说法的 ADDED 条目改成了 MODIFIED（m5b、m6、m9 的 `manager-allocation`「候选集合与权重」与「Scheduler.Allocate」，m6 的 `worker-task-exec`「Probe」），主 spec 里每条需求只有一个当前说法；`openspec validate --specs` 30 项全过（`worker-task-exec` 有一条“需求文字过长”的提示，历史遗留）。
+- **未完成任务**照样记在归档里的 tasks.md：M0 2.4（第二块网卡上外网）、4.2（3 台 Worker），M1 7.1（3 台 Worker）；M5b 5.4、M6 4.3/4.4 是“3 台 Worker 到位后重做”。
+- **以后的新变更**：主 spec 已经存在，改已有行为要用 MODIFIED（写完整的新版本），不要再用 ADDED 加“自本变更起……”。
 - 每个变更的实测数据在各自 `tasks.md`，实现中改过的方案在各自 `design.md` 的「实现中的决定」。
 
 ## 下一步
 
-1. **M10 对照实验**：四组（轮询、按核数加权轮询、本系统不带预测、本系统带预测）各 10 轮，见开发文档“对照实验”。要十几台 Worker（现在只有 lm-worker-1 和 Mac 上的 lmtest-worker2），先问用户能否加机器；“带预测”组需要临时把 `predict.push` 打开（`config/ai.yaml`，配置打在镜像里，要重建 `lm-ai`）。
+1. **M10 对照实验**：四组（轮询、按核数加权轮询、本系统不带预测、本系统带预测）各跑 10 轮，见开发文档“对照实验”。用 `/opsx:new` 或 `/opsx:ff` 新建变更。
+   - 要十几台 Worker，现在只有 lm-worker-1 和 Mac 上的 lmtest-worker2，先问用户能否加机器。
+   - “带预测”组要临时打开 `predict.push`（`config/ai.yaml`，配置打在镜像里，要重建 `lm-ai`）。
+   - 压测客户端 `lm-bench` 还只有本系统的分配方式；轮询、加权轮询两组需要在客户端或 Manager 侧加对照策略。
 2. **等用户决定**：
-   - 第二块网卡能否上外网（M0 2.4）；是否再加 2 台 Worker（M0 4.2、M1 7.1、M5b 5.4、M6 4.3/4.4）。
-   - Mac 上的 cppaiserver 容器：本会话开始时已经在运行（用户自己恢复了），M9 验收没有停它；在同一 Docker 虚拟机上做 CPU 注入时用了 `nice -n 19`。
+   - 第二块网卡能否上外网（M0 2.4）；是否再加 2 台以上 Worker（M0 4.2、M1 7.1、M5b 5.4、M6 4.3/4.4，也是 M10 的前提）。
    - 负载预测是否保持关闭（见下方 M9 数据）。
-3. **归档**：见上。
-4. 之后：M10（对照实验）。
 
 ## 关键验收数据
 
@@ -49,8 +47,8 @@
 - **M7**：每节点每 5 分钟一行，连续桶 300 样本（跑了 23.5 小时，282 行）；310 秒的任务 300 秒记执行超时、迟到完成后 task 表为 done；事件 id 在 `stream:events` 与 `node_event` 一致；MySQL 断开 70 秒期间 228 个任务全部完成、恢复后一行不少（验收中修复了断开时首批丢失）；看板主动断开、Manager 重启后不丢不重，浏览器 1 秒后重连。
 - **M9**：
   - 问答：DeepSeek 经 Nginx 20 题全对，平均 1.00 次工具调用、2.3 秒，首个 SSE 事件中位 0.79 秒，约 3700 token/题。MCP server 在虚拟机上用 stdio 客户端调通。
-  - 日报：提示词修正后 5 次生成全部通过数字核对；11-15 的统计与独立 SQL 一致。11-15 的 4038 个“超时”全是确认超时（M8 验收时 token 带引号，Worker 拒收），现在日报分开写执行超时和确认超时。定时触发在本机测试容器验证；虚拟机第一次定时生成在 11-16 09:00（11-15 的日报），没观察。
-  - 预测：普通 Holt 比朴素基线差 34%，改阻尼趋势后忙时整体好 1.7%，但高负载段持平、空闲时差 12–19%；缓升注入时没有提前量。按开发文档关闭推送（`predict.push: false`），预测和在线 MAE 照常（看板设置页）。
+  - 日报：提示词修正后 5 次生成全部通过数字核对；11-15 的统计与独立 SQL 一致。11-15 的 4038 个“超时”全是确认超时（M8 验收时 token 带引号，Worker 拒收），现在日报分开写执行超时和确认超时。虚拟机 11-16 09:00:03 定时生成了 11-15 的日报（DeepSeek，通过核对）。
+  - 预测：普通 Holt 比朴素基线差 34%，改阻尼趋势后忙时整体好 1.7%，但高负载段持平、空闲时差 12–19%；缓升注入时没有提前量。按开发文档关闭推送（`predict.push: false`），预测和在线 MAE 照常：看板设置页显示 MAE，总览显示 AI 算出的预测并注明“未参与调度”。
   - 隔离：停 AI 60 秒 882 个任务 0 失败，`f_pred` 6 秒回到 1；只丢 AI→Manager 的 50051 包 58 秒，AI 只记日志，问答、检测照常。
 - **M8**：16 次注入全部检出：测试节点 cpu 4.0–4.7 s、mem 4.1–4.6 s、disk 4.6–4.8 s、nic 3.4–4.5 s、stop 2.7–3.0 s；虚拟机 runq 4.2/4.9 s（ROS 背景下一次 46.8 s）。DeepSeek（deepseek-chat）调用 JSON 全部合格，约 5000 token/次；停止故障一度被归因成网卡，上下文加“上报情况”后正确。压测中停 AI 60 秒、阻断 MySQL 60 秒，任务 0 失败，P99 约 213 ms。空闲 1 小时误报：干净测试节点 0 次；虚拟机在 ROS 负载下 32 次（全部是真实负载变化）。
 

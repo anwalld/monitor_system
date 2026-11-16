@@ -1,6 +1,6 @@
 <script setup>
-import { computed } from "vue";
-import { live } from "../live.js";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { api, live } from "../live.js";
 import { pct, num, us, ago, STATE_LABEL } from "../fmt.js";
 
 const nodes = computed(() => live.nodes);
@@ -12,6 +12,28 @@ const totals = computed(() => {
   }
   return c;
 });
+// 负载预测：Manager 节点 JSON 里有 pred_cpu 表示预测正在参与调度（推送开启）；
+// 推送关闭时 Manager 没有预测，改读 AI 服务算出的值（ai:pred），标注“未参与调度”。AI 不可用时显示 —
+const aiPred = ref({});
+let predTimer = null;
+async function loadPred() {
+  try {
+    aiPred.value = (await api("/api/ai/predictions")).nodes || {};
+  } catch {
+    aiPred.value = {};
+  }
+}
+onMounted(() => {
+  loadPred();
+  predTimer = setInterval(loadPred, 5000);
+});
+onBeforeUnmount(() => clearInterval(predTimer));
+function predText(n) {
+  if (n.pred_cpu != null) return `${pct(n.pred_cpu)} · f_pred ${num(n.f_pred, 2)}`;
+  const p = aiPred.value[n.id];
+  if (p && p.fresh && p.cpu_busy_30s != null) return `${pct(p.cpu_busy_30s)} · 未参与调度`;
+  return "—";
+}
 const stateClass = (n) => (n.online ? `s-${n.state}` : "s-offline");
 const stateText = (n) => (n.online ? STATE_LABEL[n.state] || n.state : `${STATE_LABEL[n.state] || n.state} · 失联`);
 </script>
@@ -39,7 +61,7 @@ const stateText = (n) => (n.online ? STATE_LABEL[n.state] || n.state : `${STATE_
         <dt>在途任务</dt><dd>{{ n.inflight.inflight }}（T {{ num(n.inflight.timeout_count) }}）</dd>
         <dt>预测 30 秒 CPU</dt>
         <dd :class="{ warn: n.f_pred != null && n.f_pred < 1 }" title="AI 负载预测（Holt），f_pred < 1 时该节点权重下调">
-          {{ n.pred_cpu == null ? "—" : `${pct(n.pred_cpu)} · f_pred ${num(n.f_pred, 2)}` }}
+          {{ predText(n) }}
         </dd>
         <template v-for="c in n.nics" :key="c.name">
           <dt>{{ c.name }}</dt>

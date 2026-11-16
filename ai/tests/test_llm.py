@@ -155,5 +155,6 @@ def test_anonymizer_roundtrip():
     assert json.loads(text) == {"node": "node-2", "peers": ["node-1", "node-3"], "metric": "nic.eth0.rtt_ms"}
     back = an.reveal({"summary": "node-2 的 CPU 比 node-1、node-3 高", "x": ["node-2"]})
     assert back == {"summary": "lm-worker-10 的 CPU 比 lm-worker-1、node-1 高", "x": ["lm-worker-10"]}
+    assert an.hide_text("lm-worker-1 和 lm-worker-10") == "node-1 和 node-2"
     off = Anonymizer(["a"], False)
-    assert off.hide({"n": "a"}) == '{"n":"a"}' and off.reveal("a") == "a"
+    assert off.hide({"n": "a"}) == '{"n":"a"}' and off.reveal("a") == "a" and off.hide_text("a") == "a"

@@ -112,6 +112,10 @@ class Anonymizer:
         pat = re.compile(r"(?<![\w-])(" + "|".join(map(re.escape, keys)) + r")(?![\w-])")
         return pat.sub(lambda m: table[m.group(1)], text)
 
+    def hide_text(self, text: str) -> str:
+        """把一段文本里的节点名换成代号（未启用匿名时原样返回）。"""
+        return self._sub(text, self.fwd) if self.enabled else text
+
     def hide(self, obj: Any) -> str:
         text = json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
         return self._sub(text, self.fwd) if self.enabled else text
