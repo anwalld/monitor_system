@@ -1,0 +1,205 @@
+# CI：
+#   cpp     lm-builder 镜像里构建 Worker、Manager、eBPF、压测客户端并跑全部单元测试（含 Redis/MySQL 集成测试）；
+#           在 runner 上编译并加载 cpustat 内核模块（load_loop 卸载/泄漏检查、模块自带测试），/dev/cpustat 传进测试容器
+#   tsan    ThreadSanitizer 构建与测试
+#   images  部署用的 Manager、看板镜像能构建、能启动
+#   ai      AI 服务 pytest
+#   web     看板 npm run build
+# C++ 用与本地相同的 lm-builder 镜像（deploy/docker/builder.Dockerfile），镜像层用 GitHub Actions 缓存。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cpp:
+    name: C++ 构建与测试
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建 lm-builder 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/builder.Dockerfile
+          tags: lm-builder:ci
+          load: true
+          cache-from: type=gha,scope=lm-builder
+          cache-to: type=gha,scope=lm-builder,mode=max
+
+      - name: 编译 cpustat 内核模块（runner 内核）
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq "linux-headers-$(uname -r)" build-essential
+          make -C kmod/cpustat
+          make -C kmod/cpustat test
+          modinfo kmod/cpustat/cpustat.ko | grep -E "^(vermagic|license)"
+
+      - name: 内核模块：加载卸载循环与泄漏检查
+        run: sudo kmod/cpustat/test/load_loop.sh 200
+
+      - name: 内核模块：用户态验收测试
+        run: |
+          sudo insmod kmod/cpustat/cpustat.ko
+          ls -l /dev/cpustat
+          sudo kmod/cpustat/test/cpustat_test
+
+      - name: 启动 Redis 与 MySQL（集成测试用）
+        run: |
+          docker run -d --name lmtest-redis -p 127.0.0.1:6379:6379 redis:7-alpine
+          docker run -d --name lmtest-mysql -p 127.0.0.1:3306:3306 \
+            -e MYSQL_ROOT_PASSWORD=ci-root -e MYSQL_DATABASE=lm -e MYSQL_USER=lm -e MYSQL_PASSWORD=ci-pass \
+            -v "$PWD/deploy/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro" mysql:8.0
+          for i in $(seq 1 90); do
+            if docker exec lmtest-mysql mysql -ulm -pci-pass -h127.0.0.1 -e 'SELECT 1' lm >/dev/null 2>&1; then
+              echo "MySQL 就绪（${i}×2 秒）"; exit 0
+            fi
+            sleep 2
+          done
+          docker logs lmtest-mysql | tail -30
+          exit 1
+
+      - name: 构建并运行测试
+        run: |
+          docker run --rm --init --network host --device /dev/cpustat -v "$PWD":/src -w /src \
+            -e LM_TEST_REDIS_URI=tcp://127.0.0.1:6379 \
+            -e LM_TEST_MYSQL_HOST=127.0.0.1 -e LM_TEST_MYSQL_PORT=3306 \
+            -e LM_TEST_MYSQL_USER=lm -e LM_TEST_MYSQL_PASSWORD=ci-pass \
+            lm-builder:ci bash -c '
+              set -e
+              cmake -S . -B build-ci -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+              cmake --build build-ci
+              ctest --test-dir build-ci --output-on-failure
+            '
+
+      - name: 卸载内核模块
+        if: always()
+        run: sudo rmmod cpustat || true
+
+  tsan:
+    name: ThreadSanitizer
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # Ubuntu 24.04 的新内核默认 mmap 随机化位数过高，TSan 运行时会报 unexpected memory mapping
+      - name: 降低 mmap 随机化位数
+        run: sudo sysctl -w vm.mmap_rnd_bits=28
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建 lm-builder 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/builder.Dockerfile
+          tags: lm-builder:ci
+          load: true
+          cache-from: type=gha,scope=lm-builder
+          cache-to: type=gha,scope=lm-builder,mode=max
+
+      - name: TSan 构建并运行测试
+        run: |
+          docker run --rm --init -v "$PWD":/src -w /src lm-builder:ci bash -c '
+            set -e
+            cmake -S . -B build-ci-tsan -G Ninja -DLM_ENABLE_TSAN=ON -DLM_ENABLE_BPF=OFF
+            cmake --build build-ci-tsan
+            ctest --test-dir build-ci-tsan --output-on-failure
+          '
+
+  images:
+    name: 部署镜像
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建 lm-manager 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/manager.Dockerfile
+          tags: lm-manager:ci
+          load: true
+          cache-from: type=gha,scope=lm-manager
+          cache-to: type=gha,scope=lm-manager,mode=max
+
+      - name: 构建 lm-web 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/web.Dockerfile
+          tags: lm-web:ci
+          load: true
+          cache-from: type=gha,scope=lm-web
+          cache-to: type=gha,scope=lm-web,mode=max
+
+      - name: 启动检查
+        run: |
+          # Manager：用仓库里的配置启动（没有 Redis/MySQL 也应起来），看 gRPC 与看板端口在监听
+          docker run -d --name ci-manager --network host lm-manager:ci
+          for i in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/50051) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
+              echo "Manager 已监听 50051、8080"; break
+            fi
+            sleep 1
+          done
+          docker logs ci-manager 2>&1 | tail -20
+          (exec 3<>/dev/tcp/127.0.0.1/50051) && (exec 3<>/dev/tcp/127.0.0.1/8080)
+          docker rm -f ci-manager
+          # 看板：Nginx 配置语法检查
+          docker run --rm lm-web:ci nginx -t
+
+  ai:
+    name: AI 服务测试
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建 lm-ai 镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/ai.Dockerfile
+          tags: lm-ai:ci
+          load: true
+          cache-from: type=gha,scope=lm-ai
+          cache-to: type=gha,scope=lm-ai,mode=max
+
+      - name: pytest
+        run: docker run --rm lm-ai:ci python -m pytest -q
+
+  web:
+    name: 看板构建
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci
+        working-directory: web
+
+      - run: npm run build
+        working-directory: web

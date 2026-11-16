@@ -45,6 +45,7 @@ bool Reporter::report_once() {
   if (!ring_.take_latest(s)) return false;
   if (s.seq() <= last_seq_.load(std::memory_order_relaxed)) return false;  // 已发过
   last_seq_.store(s.seq(), std::memory_order_relaxed);
+  s.set_max_concurrent(opt_.max_concurrent);
 
   if (sink_) {
     sink_(s);

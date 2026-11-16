@@ -32,7 +32,7 @@ Worker 每秒采集节点指标，Manager 给每台节点打分，把每个任�
 | 🛡️ **熔断式状态机** | 慢启动 → 正常 → 剔除 / 急救。急救每 1 ms 一条探测，最长 10 秒，反复急救指数退避；进程停止 2.7 秒剔除 |
 | 📊 **实时看板** | Vue 3 + ECharts，WebSocket 推送；断线退避重连，按事件 id 补发、去重，Manager 重启后事件不丢不重 |
 | 🤖 **AI 旁路** | 稳健 z 分数检测 + LLM 结构化诊断（JSON schema 校验）；六个只读工具的运维问答，同时是 MCP server；日报数字由代码计算，LLM 只写正文并逐个核对 |
-| 🧪 **可验证** | GoogleTest 单元测试与 Redis/MySQL 集成测试、ThreadSanitizer 构建、pytest、故障注入评估脚本、四组对照实验 |
+| 🧪 **可验证** | GoogleTest 单元测试与 Redis/MySQL 集成测试、ThreadSanitizer 构建、pytest、GitHub Actions CI、故障注入评估脚本、四组对照实验 |
 
 ## 架构
 
@@ -65,6 +65,16 @@ Worker 每秒采集节点指标，Manager 给每台节点打分，把每个任�
 | 本系统（带预测） | 427 | 1706 | 1768 | 10/10 次，中位 6.0 秒 |
 
 本系统每次都在约 6 秒内避开被干扰的节点，P99 低 8%–23%，干扰期 P99 低约 24%。三节点下轮间波动大，统计上还不显著（p 0.15–0.64），负载预测没有带来提升，所以默认不推送。明细见 [`experiments/results/m10-3node/summary.md`](experiments/results/m10-3node/summary.md)。
+
+这轮实验里本系统的失败数反而是轮询的约 3 倍：任务集中到少数节点时撞上了 Worker 的并发上限。之后加上**并发上限感知**（Worker 上报上限，Manager 跳过在途已满的节点），用同样的种子复跑：
+
+| 组 | P99 ms | 干扰期 P99 ms | 失败/次 |
+|---|---|---|---|
+| 轮询 | 1372 | 1520 | 15.8 |
+| 加权轮询 | 1179 | 1465 | 12.6 |
+| **本系统** | **924** | **1010** | **10.8**（修正前 115.6） |
+
+本系统失败数降到三组最少，P99 比轮询低 33%，轮间标准差从 602 ms 降到 124 ms；逐轮配对 8–9/10 轮优于轮询，p 0.12–0.20，仍不算显著。明细见 [`experiments/results/cap-3node/summary.md`](experiments/results/cap-3node/summary.md)。
 
 其他单项验收：
 
@@ -145,6 +155,8 @@ docker run --rm -v "$PWD":/src -w /src lm-builder bash -c \
 | `LM_VMLINUX_BTF` | `/sys/kernel/btf/vmlinux` | 生成 `vmlinux.h` 用的 BTF 文件 |
 
 Redis 集成测试需设置 `LM_TEST_REDIS_URI=tcp://host:6379`（有密码再设 `LM_TEST_REDIS_PASSWORD`），否则跳过。
+
+CI（[`.github/workflows/ci.yml`](.github/workflows/ci.yml)）在每个 PR 和 main 的推送上跑：lm-builder 镜像里构建并跑全部单元测试（起 Redis、MySQL 容器，集成测试不跳过；在 runner 内核上编译并加载 cpustat 模块，先跑 200 次加载卸载与泄漏检查和模块自带测试，再把 `/dev/cpustat` 传进测试容器）、ThreadSanitizer 构建与测试、Manager 与看板镜像构建和启动检查、AI 服务 pytest、看板构建。
 
 ## 使用
 
@@ -308,11 +320,11 @@ openspec/     需求规格与按里程碑划分的变更记录
 | M7 | 事件流、MySQL 冷数据、REST/WebSocket、看板 | ✅ MySQL 断开 70 秒调度不受影响 |
 | M8 | 异常检测、LLM 诊断 | ✅ 16 次注入全部检出 |
 | M9 | 运维问答（MCP）、负载预测、日报 | ✅ 问答 20 题全对 |
-| M10 | 与轮询、加权轮询对照 | ✅ 三节点完成，待更大规模重跑 |
+| M10 | 与轮询、加权轮询对照 | ✅ 三节点完成；加并发上限感知后 P99 低 33%、失败最少；待更大规模重跑 |
 
 每个里程碑对应一个 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 变更，归档在 `openspec/changes/archive/`，当前需求规格在 `openspec/specs/`。
 
-**后续计划**：十几台 Worker 规模下重跑对照实验与故障隔离；调度感知 Worker 的并发上限。
+**后续计划**：十几台 Worker 规模下重跑对照实验与故障隔离。
 
 ## 贡献者
 

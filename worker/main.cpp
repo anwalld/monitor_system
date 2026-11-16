@@ -154,6 +154,7 @@ int main(int argc, char** argv) {
   lm::worker::Reporter::Options ropt;
   ropt.interval = std::chrono::milliseconds(cfg.get<int>("report_interval_ms", 1000));
   ropt.deadline = std::chrono::milliseconds(cfg.get<int>("report_deadline_ms", 500));
+  if (task_cfg.enabled) ropt.max_concurrent = static_cast<uint32_t>(task_cfg.max_concurrent);
   const std::string manager = cfg.get<std::string>("manager_addr", "127.0.0.1:50051");
 
   std::signal(SIGINT, on_signal);

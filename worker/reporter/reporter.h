@@ -30,6 +30,8 @@ class Reporter {
     // 抖动会让上报偶尔早于本周期样本、下一拍又跳过一条；错开半个周期可保证每拍恰好有一条新样本。
     // 小于 0 表示取 interval / 2。
     std::chrono::milliseconds phase{-1};
+    // 任务服务的并发上限，每条上报都带上；0 表示未开任务服务或不限制。
+    uint32_t max_concurrent = 0;
   };
 
   Reporter(SampleRing& ring, std::shared_ptr<grpc::Channel> channel, Options opt);

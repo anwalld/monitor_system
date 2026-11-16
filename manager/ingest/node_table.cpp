@@ -56,6 +56,7 @@ NodeTable::Result NodeTable::apply(const lm::Sample& s, std::string_view peer_ip
 
   n.addr = join_host_port(peer_ip, opt_.worker_port);
   n.ncpu = static_cast<uint32_t>(s.core_busy_size());
+  n.max_concurrent = s.max_concurrent();
   n.last_seq = s.seq();
   n.last_seen_mono_ms = now_mono_ms;
   n.last_seen_wall_ms = now_wall_ms;
@@ -274,6 +275,13 @@ SelectResult NodeTable::select_locked(int64_t now_mono_ms, double u, bool use_pr
     if (n.br.mode == NodeMode::kEvicted || n.evict.evicted()) {
       ++r.evicted;
       continue;
+    }
+    if (n.max_concurrent > 0) {
+      const auto* c = ledger_.node(n.node_id);
+      if (c != nullptr && c->inflight_tasks >= static_cast<int64_t>(n.max_concurrent)) {
+        ++r.full;  // 在途已满：只跳过本次选择，不影响分数与状态机
+        continue;
+      }
     }
     Factors f = factors_for(n, now_mono_ms, false);
     if (!use_pred) f.pred = 1;

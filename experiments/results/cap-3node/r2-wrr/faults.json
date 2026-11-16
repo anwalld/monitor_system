@@ -1,0 +1,14 @@
+{
+ "wall_start": 1794823689.9725492,
+ "rc": 0,
+ "faults": [
+  {
+   "kind": "cpu",
+   "node": "lmtest-worker3",
+   "start_s": 62.9,
+   "dur_s": 60.0,
+   "actual_start_s": 62.95,
+   "actual_stop_s": 123.01
+  }
+ ]
+}

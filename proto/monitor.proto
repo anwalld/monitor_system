@@ -25,6 +25,7 @@ message Sample {
   float mem_avail_ratio = 9;
   float disk_util = 10;
   repeated NicStat nics = 11;
+  uint32 max_concurrent = 12;      // 任务服务并发上限；0 = 未开任务服务或不限制
 }
 
 message TaskEvent {
