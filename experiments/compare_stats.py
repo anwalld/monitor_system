@@ -7,7 +7,8 @@
 - 完成时间：成功任务从 Allocate 到 Submit 返回的毫秒数；P50、P99、最大值；吞吐 = 成功数 / 运行秒数。
 - 干扰期 P99：CPU 干扰开始后、持续时间内发起的成功任务的 P99。
 - 反应时间：CPU 干扰节点在干扰前 30 秒的分配占比为基线 b；5 秒滑动窗口（步长 0.5 秒）占比首次 ≤ b/2 时，
-  窗口终点减干扰开始时刻；干扰持续时间内没降到一半记“未降”；b < 0.1 或窗口内分配数 < 10 不计。
+  窗口终点减干扰开始时刻；60 秒内（干扰短于 60 秒时为干扰持续时间内）没降到一半记“未降”；
+  b < 0.1 或窗口内分配数 < 10 不计。
 - 组间比较：各组相对第一组（默认 rr）的差值、Cohen's d、Welch t 检验 p 值（自由度用 Welch–Satterthwaite，
   p 值用正态近似，样本小时偏乐观）。
 只用标准库。
@@ -40,8 +41,11 @@ def load_run(d):
     return rows, faults
 
 
-def reaction(rows, addr, t_start, dur, win=5.0, step=0.5, base_s=30.0):
-    """返回 (反应秒数或 None, 状态, 基线占比)。状态：ok / 未降 / 不计。"""
+def reaction(rows, addr, t_start, dur, win=5.0, step=0.5, base_s=30.0, limit_s=60.0):
+    """返回 (反应秒数或 None, 状态, 基线占比)。状态：ok / 未降 / 不计。
+
+    最多看 limit_s 秒（spec：60 秒内未降记“未降”）；干扰更短时只看到干扰结束，结束后的占比变化不算反应。
+    """
     allocs = [(r["start_ms"] / 1000.0, r["worker_addr"]) for r in rows if r["worker_addr"]]
     pre = [a for t, a in allocs if t_start - base_s <= t < t_start]
     if len(pre) < 10:
@@ -50,7 +54,7 @@ def reaction(rows, addr, t_start, dur, win=5.0, step=0.5, base_s=30.0):
     if b < 0.1:
         return None, "不计", b
     w = t_start + step
-    while w <= t_start + dur:
+    while w <= t_start + min(dur, limit_s):
         win_allocs = [a for t, a in allocs if w - win <= t < w]
         if len(win_allocs) >= 10 and sum(1 for a in win_allocs if a == addr) / len(win_allocs) <= b / 2:
             return round(w - t_start, 1), "ok", b

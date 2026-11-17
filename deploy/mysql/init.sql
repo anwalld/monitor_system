@@ -38,7 +38,7 @@ CREATE TABLE node_event (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE task (
-  task_id     CHAR(26) PRIMARY KEY,   -- ULID
+  task_id     CHAR(26) PRIMARY KEY,   -- <Manager 启动时 Unix 毫秒的十六进制>-<序号>，如 19a8b2c3d4e-42
   node_id     VARCHAR(64) NOT NULL,
   input_bytes BIGINT NOT NULL,
   state       VARCHAR(16) NOT NULL,   -- allocated / sent / received / done / failed / timeout / void
