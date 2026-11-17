@@ -22,7 +22,11 @@ test_softirq
 # IDE
 .vscode/
 .idea/
-.claude/launch.json
+
+# AI 助手的本机配置与工具文件（OpenSpec 的 opsx 命令可用 openspec init/update 重新生成）
+.claude/
+CLAUDE.md
+/AGENTS.md
 *.swp
 *.swo
 
@@ -60,3 +64,17 @@ __pycache__/
 
 # AI 服务生成的 proto 代码（M9，镜像构建时生成）
 ai/lmai/pb/*_pb2*.py
+
+# 会话交接等过程笔记（含本机环境细节，只留本地）
+/docs/HANDOFF.md
+openspec/changes/**/handoff*.md
+openspec/changes/**/verification-report.md
+openspec/changes/**/implementation-notes.md
+openspec/changes/**/review-report.md
+
+# 实验输出：只提交每组实验的汇总（summary.md / summary.json），原始明细、日志留在本地
+/experiments/results/*
+!/experiments/results/*/
+/experiments/results/*/*
+!/experiments/results/*/summary.md
+!/experiments/results/*/summary.json
